@@ -22,6 +22,7 @@ class Camera:
         self.cap = cv2.VideoCapture(device, cv2.CAP_V4L2)
         self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.IM_WIDTH)
         self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.IM_HEIGHT)
+        self.cap.set(cv2.CAP_PROP_BUFFERSIZE , 5)
 
         self.cap.set(cv2.CAP_PROP_FPS, 30)
         subprocess.call("v4l2-ctl -c power_line_frequency=1", shell=True)

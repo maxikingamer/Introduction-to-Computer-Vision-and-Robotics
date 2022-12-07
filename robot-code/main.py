@@ -7,6 +7,9 @@ from message import Message
 from camera import Camera
 from publisher import Publisher
 from keypress_listener import KeypressListener
+import ev3_dc as ev3
+from thread_task import Periodic, Task, Repeated, STATE_STARTED, STATE_FINISHED, STATE_STOPPED, STATE_TO_STOP
+
 
 class Main():
     def __init__(self) -> None:
@@ -16,6 +19,7 @@ class Main():
         self.keypress_listener = KeypressListener()
         self.publisher = Publisher()
         self.camera = Camera()
+        self.camera_height = 0.285
 
         print("camera_matrix", self.camera.camera_matrix)
         print("camera_", self.camera.dist_coeffs)
@@ -24,22 +28,31 @@ class Main():
 
     ##### -------OUR CODE--------- ######
     def transformImage(self, img):
-        # img = np.flipud(img)
-        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
         aruco_dict = cv2.aruco.Dictionary_get(cv2.aruco.DICT_ARUCO_ORIGINAL)        
         parameters = cv2.aruco.DetectorParameters_create()  
         corners, ids, rejected_img_points = cv2.aruco.detectMarkers(img, aruco_dict, parameters=parameters)
-        tvecs = []
+        positions = []
+        distances = []
 
-        if np.all(ids is not None):
+        if ids is not None:
             for j in range(0, len(ids)):
-                rvec, tvec, _ = cv2.aruco.estimatePoseSingleMarkers(corners[j], 1, self.camera.camera_matrix, self.camera.dist_coeffs)
-                (rvec - tvec).any()
-                tvecs.append([tvec[0][0][0], tvec[0][0][1]])
-                cv2.aruco.drawDetectedMarkers(img, corners)
-                cv2.drawFrameAxes(img, self.camera.camera_matrix, self.camera.dist_coeffs, rvec, tvec, 1)
+                rvec, tvec, _ = cv2.aruco.estimatePoseSingleMarkers(corners[j], 0.048, self.camera.camera_matrix, self.camera.dist_coeffs)
+                # (rvec - tvec).any()
 
-        return img, ids, tvecs
+                hypothenuse = np.linalg.norm(tvec)
+                distance = np.sqrt(hypothenuse**2 - self.camera_height**2)
+                distances.append(distance)
+                pos_x = tvec[0][0][0]
+                pos_y = np.sqrt(distance**2 - pos_x**2)
+
+                positions.append([pos_x, pos_y])
+                cv2.aruco.drawDetectedMarkers(img, corners)
+                cv2.drawFrameAxes(img, self.camera.camera_matrix, self.camera.dist_coeffs, rvec, tvec, 0.048)
+        else:
+            ids = []
+
+
+        return img, ids, positions, distances
 
     ##### -------OUR CODE--------- ######
 
@@ -47,55 +60,73 @@ class Main():
         # counter
         count = 0
         start = True
-        while True:
-            try:
-                print("count:", count)
-                # maybe we want to get keypresses in the terminal, for debugging
-                self.parse_keypress()
 
-                # get image from the camera
-                _, raw_img = self.camera.read()
-                
-                # get the time
-                time0 = time.time()
+        try:
+            with ev3.TwoWheelVehicle(
+                0.0210,  # radius_wheel
+                0.1350,  # tread
+                protocol=ev3.USB
+            ) as vehicle:
+                while True:
+                    try:
+                        print("count:", count)
+                        # maybe we want to get keypresses in the terminal, for debugging
+                        self.parse_keypress()
 
-                # imaginary processing
-                img, ids, positions = self.transformImage(raw_img)
+                        # get image from the camera
+                        _, raw_img = self.camera.read()
+                        
+                        # get the time
+                        time0 = time.time()
 
-                # create message
-                msg = Message(
-                    id = count,
-                    timestamp = time0,
-                    start = True,
-                    
-                    landmark_ids = ids,
-                    landmark_rs = [],
-                    landmark_alphas = [],
-                    landmark_positions = positions,
+                        # imaginary processing
+                        img, ids, positions, distance = self.transformImage(raw_img)
 
-                    landmark_estimated_ids = [],
-                    landmark_estimated_positions = [],
-                    landmark_estimated_stdevs = [],
+                        if len(distance) > 0:
+                            if min(distance)<0.4:
+                                Task(vehicle.drive_turn(180,0,speed=30)).start(thread=False)
+                            else:
+                                Task(vehicle.drive_straight(0.01)).start(thread=False)
+                        else:
+                            Task(vehicle.drive_straight(0.01)).start(thread=False)
+                        
 
-                    robot_position = np.array([0.0, 0.0]),
-                    robot_theta = 0.0,
-                    robot_stdev = [0.5, 0.5, 0.5],
-                )
+                        # create message
+                        msg = Message(
+                            id = count,
+                            timestamp = time0,
+                            start = True,
+                            
+                            landmark_ids = ids,
+                            landmark_rs = [],
+                            landmark_alphas = [],
+                            landmark_positions = positions,
 
-                # pickle message
-                msg_str = jsonpickle.encode(msg)
+                            landmark_estimated_ids = [],
+                            landmark_estimated_positions = [],
+                            landmark_estimated_stdevs = [],
 
-                # publish message and image
-                self.publisher.publish_img(msg_str, img)
+                            robot_position = np.array([0.0, 0.0]),
+                            robot_theta = 0.0,
+                            robot_stdev = [0.5, 0.5, 0.5],
+                        )
 
-                count += 1
-                start = False
+                        # pickle message
+                        msg_str = jsonpickle.encode(msg)
 
-            except KeyboardInterrupt:
-                # tidy up
-                self.close()
-                break
-        
+                        # publish message and image
+                        self.publisher.publish_img(msg_str, img)
+
+                        count += 1
+                        start = False
+
+                    except KeyboardInterrupt:
+                        # tidy up
+                        self.close()
+                        break
+        except Exception as e:
+            print(e)
+
         # tidy up
         self.close()
 
