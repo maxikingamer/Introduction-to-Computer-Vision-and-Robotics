@@ -1,19 +1,19 @@
 import numpy as np
 
-def get_motor_movement(ev3_wheeled_vehicle, movement_type, movement_args):
+def get_motor_movement(vehicle, tread, movement_type, movement_args):
     # returns the motor movement in this timestep
     # return (l, r)
-    x, y, angle = ev3_wheeled_vehicle.position()
-    if movement_type == "straigt":
+    x, y, angle = vehicle.position
+    if movement_type == "straight":
         return movement_args, movement_args
     else:
-        if movement_args[1] < 0:
-            tread_r = movement_args[0] + ev3_wheeled_vehicle.tread/2
-            tread_l = movement_args[0] - ev3_wheeled_vehicle.tread/2
+        if movement_args[0] < 0:
+            tread_r = movement_args[1] + tread/2
+            tread_l = movement_args[1] - tread/2
         else:
-            tread_r = movement_args[0] - ev3_wheeled_vehicle.tread/2
-            tread_l = movement_args[0] + ev3_wheeled_vehicle.tread/2
-        return movement_args[1] * tread_l, movement_args[1] * tread_r
+            tread_r = movement_args[1] - tread/2
+            tread_l = movement_args[1] + tread/2
+        return movement_args[0] * tread_l, movement_args[0] * tread_r
 
 def camera_detections(robot_pose):
     # get landmarks from camera image and return a list
@@ -23,7 +23,7 @@ def camera_detections(robot_pose):
     
 class EKFSLAM:
     def __init__(self,stddev_l,stddev_r,erorr_r,erorr_alpha):
-        self.mu = np.array([0,0,0])
+        self.mu = np.zeros(3)
         self.sigma = np.array([[0,0,0],[0,0,0],[0,0,0]])
         self.sigma_l =  stddev_l
         self.sigma_r =  stddev_r
@@ -31,18 +31,18 @@ class EKFSLAM:
         self.merror_alpha = erorr_alpha
         self.map = {}
         
-    def predict(self):
+    def predict(self, vehicle, tread, movement_type, movement_args):
         """
         Compute the prediction step as provided in the pdf.
         INPUT PARAMETERS ARE TO BE DECIDED
         SINCE WE NEED ACCESS TO THE MOVEMENT 
         """
         sigma = self.sigma[:3,:3]
-        l, r = get_motor_movement(ev3_wheeled_vehicle,movement_type,movement_args)
-        w = ev3_wheeled_vehicle.tread
+        l, r = get_motor_movement(vehicle, tread, movement_type, movement_args)
+        w = tread
         theta = self.mu[2]
         alpha = (r-l)/w
-        sigma_mu = np.array([[sigma_l**2,0],[0,sigma_r**2]])
+        sigma_mu = np.array([[self.sigma_l**2,0],[0,self.sigma_r**2]])
         
         #create the matrixes G and V
         if l!=r:
@@ -58,17 +58,17 @@ class EKFSLAM:
             C = 0.5*(np.cos(theta) - (l/w) * np.sin(theta))
             D = 0.5*(np.sin(theta) + (l/w) * np.cos(theta))
         V = np.array([[A,C],[B,D],[-1/w,1/w]])
+
         
         #new coords formula
-        theta_new = (theta+alpha)%(2*np.pi)
-        new_coords = np.array([self.mu[0],self.mu[1]]) + ((l/alpha) + (w/2)) * (np.array([np.sin(theta+alpha) - np.sin(theta),-np.cosn(theta+alpha)+np.cos(theta)]))
+        # theta_new = (theta+alpha)%(2*np.pi)
+        # new_coords = np.array([self.mu[0],self.mu[1]]) + ((l/alpha) + (w/2)) * (np.array([np.sin(theta+alpha) - np.sin(theta),-np.cosn(theta+alpha)+np.cos(theta)]))
         
         #new coords direct
-        self.mu[0], self.mu[1], self.mu[3] = ev3_wheeled_vehicle.position()
+        self.mu[0], self.mu[1], self.mu[2] = vehicle.position
         
         #sigma update
         self.sigma[:3,:3] = np.matmul(np.matmul(G,sigma),G.T) + np.matmul(np.matmul(V,sigma_mu),V.T)
-        
         
     def add_landmark(self,landmark_id,coordinates,uncertainty):
         """
@@ -79,8 +79,7 @@ class EKFSLAM:
         """
         
         # extend mu
-        self.mu = np.array(list(self.mu).append(coordinates))
-        
+        self.mu = np.append(self.mu, coordinates,axis=0)
         # map the landmark id to its position in the coordinates vector
         self.map[landmark_id] = (len(self.mu)-3)/2
         
@@ -97,18 +96,18 @@ class EKFSLAM:
         :param landmark_id: the id of the detected aruco marker
         :param landmark_coords: the [x,y]-coordinates of the aruco marker
         """
-        landmark_id_in_mu = self.map[landmark_id]
-        positions, errors = self.get_landmark_x_y(self.map[landmark_id_in_mu])
+        landmark_id_in_mu = int(self.map[landmark_id])
+        positions, errors = self.get_landmark_x_y(landmark_id_in_mu)
         robot_positions, robot_error = self.get_robot_pose()
-        
+
         #estimated distance and angle to landmark
         est_r = np.sqrt((positions[0]-robot_positions[0])**2 + (positions[1]-robot_positions[1])**2)
         est_alpha = np.arctan((positions[1]-robot_positions[1])/(positions[0]-robot_positions[0])) - robot_positions[2]
-        
+
         #measured distance and angle to landmark
         measured_r = np.sqrt((landmark_coords[0]-robot_positions[0])**2 + (landmark_coords[1]-robot_positions[1])**2)
         measured_alpha = np.arctan((landmark_coords[1]-robot_positions[1])/(landmark_coords[0]-robot_positions[0])) - robot_positions[2]
-        
+
         # compute matrix H
         H = np.zeros((2,len(self.mu)))
         H[0,0] = (positions[0]-robot_positions[0])/est_r
@@ -121,7 +120,7 @@ class EKFSLAM:
         H[0,2*landmark_id_in_mu+2] = (positions[1]-robot_positions[1])/est_r
         H[1,2*landmark_id_in_mu+1] = (positions[1]-robot_positions[1])/est_r
         H[1,2*landmark_id_in_mu+2] = (positions[0]-robot_positions[0])/est_r
-        
+
         #correction step
         Q = np.diag((self.merror_r,self.merror_alpha))
         K = self.sigma @ (H.T @ np.linalg.inv(H @ self.sigma @ H.T + Q))
@@ -129,8 +128,8 @@ class EKFSLAM:
         assert -np.pi < measured_alpha - est_alpha < np.pi
         # update mu
         # formula changed but the result should be identical to the one provided in the pdf
-        self.mu = self.mu + (np.array([measured_r[0],measured_r[1],measured_alpha]) - np.array([est_r[0],est_r[1],est_alpha])) @ K.T
-        
+        self.mu = self.mu + K @ (np.array([measured_r, measured_alpha]) - np.array([est_r, est_alpha])) 
+
         #update sigma
         self.sigma = (np.identity(self.sigma.shape[0]) - K @ H ) @ self.sigma
         
@@ -138,7 +137,7 @@ class EKFSLAM:
         # read out the robot position and angle from mu variable
         # read out robot error from Sigma
         
-        return self.mu[0], self.mu[1], self.mu[2], self.sigma[:3,:3]
+        return self.mu[:3], self.sigma[:3,:3]
 
     # the two following functions can be merged
     def get_landmark_positions(self):# read out the landmark positions from mu variable
@@ -151,7 +150,7 @@ class EKFSLAM:
         
         
     def id_never_seen_before(self, id):
-        return self.map.keys.contains(id)
+        return not(id in list(self.map.keys()))
 
 
 
