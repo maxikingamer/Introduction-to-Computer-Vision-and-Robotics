@@ -1,4 +1,5 @@
 import numpy as np
+import math
 
 def get_motor_movement(vehicle, tread, movement_type, movement_args):
     # returns the motor movement in this timestep
@@ -51,24 +52,34 @@ class EKFSLAM:
             B = ((w*r)/(r-l)) * (-np.cos(theta+alpha) + np.cos(theta)) - ((r+l)/2*(r-l))*np.sin(theta+alpha)
             C = ((w*r)/(r-l)) * (np.sin(theta+alpha) - np.sin(theta)) - ((r+l)/2*(r-l))*np.cos(theta+alpha)
             D = ((w*r)/(r-l)) * (-np.cos(theta+alpha) + np.cos(theta)) - ((r+l)/2*(r-l))*np.sin(theta+alpha)
+            new_coords = np.array([self.mu[0],self.mu[1]]) + ((l/alpha) + (w/2)) * np.array([np.sin(theta+alpha) - np.sin(theta),-np.cos(theta+alpha)+np.cos(theta)])
+
         else:
             G = np.array([[1,0,-l*np.sin(theta)],[0,1,l*np.cos(theta)],[0,0,1]])
             A = 0.5*(np.cos(theta) + (l/w) * np.sin(theta))
             B = 0.5*(np.sin(theta) - (l/w) * np.cos(theta))
             C = 0.5*(np.cos(theta) - (l/w) * np.sin(theta))
             D = 0.5*(np.sin(theta) + (l/w) * np.cos(theta))
+            new_coords = np.array(self.mu[:2]) + l * np.array([np.cos(theta), np.sin(theta)])
         V = np.array([[A,C],[B,D],[-1/w,1/w]])
 
         
         #new coords formula
-        # theta_new = (theta+alpha)%(2*np.pi)
-        # new_coords = np.array([self.mu[0],self.mu[1]]) + ((l/alpha) + (w/2)) * (np.array([np.sin(theta+alpha) - np.sin(theta),-np.cosn(theta+alpha)+np.cos(theta)]))
-        
+        angle = math.fmod(theta+alpha,(2*np.pi))
+        self.mu[2] = angle
+        self.mu[0] = new_coords[0]
+        self.mu[1] = new_coords[1]
+
         #new coords direct
         self.mu[0], self.mu[1], self.mu[2] = vehicle.position
+        self.mu[2] = np.radians(self.mu[2])
+
+        # print("\n SLAM Coords: ", new_coords)
+        # print("\n Vehicle Coords: ", self.mu[:3])
         
         #sigma update
-        self.sigma[:3,:3] = np.matmul(np.matmul(G,sigma),G.T) + np.matmul(np.matmul(V,sigma_mu),V.T)
+        self.sigma[:3,:3] = (G @ sigma @ G.T) + (V @ sigma_mu @ V.T)
+
         
     def add_landmark(self,landmark_id,coordinates,uncertainty):
         """
@@ -102,11 +113,11 @@ class EKFSLAM:
 
         #estimated distance and angle to landmark
         est_r = np.sqrt((positions[0]-robot_positions[0])**2 + (positions[1]-robot_positions[1])**2)
-        est_alpha = np.arctan((positions[1]-robot_positions[1])/(positions[0]-robot_positions[0])) - robot_positions[2]
+        est_alpha = np.arctan2((positions[1]-robot_positions[1]),(positions[0]-robot_positions[0])) - robot_positions[2]
 
         #measured distance and angle to landmark
         measured_r = np.sqrt((landmark_coords[0]-robot_positions[0])**2 + (landmark_coords[1]-robot_positions[1])**2)
-        measured_alpha = np.arctan((landmark_coords[1]-robot_positions[1])/(landmark_coords[0]-robot_positions[0])) - robot_positions[2]
+        measured_alpha = np.arctan2((landmark_coords[1]-robot_positions[1]),(landmark_coords[0]-robot_positions[0])) - robot_positions[2]
 
         # compute matrix H
         H = np.zeros((2,len(self.mu)))
@@ -125,10 +136,11 @@ class EKFSLAM:
         Q = np.diag((self.merror_r,self.merror_alpha))
         K = self.sigma @ (H.T @ np.linalg.inv(H @ self.sigma @ H.T + Q))
         
-        assert -np.pi < measured_alpha - est_alpha < np.pi
+        assert -np.pi < est_alpha < np.pi
+        assert -np.pi < measured_alpha < np.pi
         # update mu
         # formula changed but the result should be identical to the one provided in the pdf
-        self.mu = self.mu + K @ (np.array([measured_r, measured_alpha]) - np.array([est_r, est_alpha])) 
+        self.mu = self.mu + (K @ (np.array([measured_r, measured_alpha]) - np.array([est_r, est_alpha])))
 
         #update sigma
         self.sigma = (np.identity(self.sigma.shape[0]) - K @ H ) @ self.sigma
@@ -138,6 +150,7 @@ class EKFSLAM:
         # read out robot error from Sigma
         
         return self.mu[:3], self.sigma[:3,:3]
+
 
     # the two following functions can be merged
     def get_landmark_positions(self):# read out the landmark positions from mu variable
@@ -173,4 +186,4 @@ for timestep in timesteps:
         if slam.id_never_seen_before(id):
             slam.add_landmark(world_coords)
         slam.correction(actual_measurement, id)
-        print("landmark estimated positions:", slam.get_landmark_positions())
+        # print("landmark estimated positions:", slam.get_landmark_positions())
