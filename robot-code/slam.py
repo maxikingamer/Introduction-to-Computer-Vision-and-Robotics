@@ -105,7 +105,8 @@ class EKFSLAM:
         :param coordinates: the [x,y]-coordinates of the landmark 
         :param uncertainty: the uncertainty of the measurment as an iterable with length 2
         """
-        coordinates_fixed = [coordinates[1],coordinates[0]]
+        # coordinates_fixed = [coordinates[1],coordinates[0]]
+        coordinates_fixed = [coordinates[0],coordinates[1]]
         # extend mu
         self.mu = np.append(self.mu, coordinates_fixed,axis=0)
         # map the landmark id to its position in the coordinates vector
@@ -124,9 +125,10 @@ class EKFSLAM:
         :param landmark_id: the id of the detected aruco marker
         :param landmark_coords: the [x,y]-coordinates of the aruco marker
         """
-        landmark_coords = [landmark_coords[1],landmark_coords[0]]
-        landmark_id_in_mu = int(self.map[landmark_id])
-        positions, errors = self.get_landmark_x_y(landmark_id_in_mu)
+        # landmark_coords = [landmark_coords[1],landmark_coords[0]]
+        landmark_id_in_mu = int(self.map[landmark_id])-1
+        #positions, errors = self.get_landmark_x_y(landmark_id_in_mu)
+        positions = self.mu[3+2*landmark_id_in_mu : 3+2*(landmark_id_in_mu+1)]
         robot_positions, robot_error = self.get_robot_pose()
 
         #estimated distance and angle to landmark
@@ -137,20 +139,33 @@ class EKFSLAM:
         measured_r = np.sqrt((landmark_coords[0]-robot_positions[0])**2 + (landmark_coords[1]-robot_positions[1])**2)
         measured_alpha = np.arctan2((landmark_coords[1]-robot_positions[1]),(landmark_coords[0]-robot_positions[0])) - robot_positions[2]
         #print(measured_alpha)
+    
+        x_bot, y_bot, theta_bot = robot_positions
+        x_lm, y_lm = positions
+        dx = x_lm - x_bot
+        dy = y_lm - y_bot
         #compute matrix H
         H = np.zeros((2,len(self.mu)))
-        H[0,0] = -(landmark_coords[0]-robot_positions[0])/measured_r
-        H[0,1] = -(landmark_coords[1]-robot_positions[1])/measured_r
+        H[0,0] = -(positions[0]-robot_positions[0])/est_r
+        H[0,1] = -(positions[1]-robot_positions[1])/est_r
         H[0,2] = 0
-        H[1,0] = (landmark_coords[1]-robot_positions[1])/(measured_r**2)
-        H[1,1] = -(landmark_coords[0]-robot_positions[0])/(measured_r**2)
+        H[1,0] = (positions[1]-robot_positions[1])/(est_r**2)
+        H[1,1] = -(positions[0]-robot_positions[0])/(est_r**2)
         H[1,2] = -1
-        H[0,2*landmark_id_in_mu+1] = (landmark_coords[0]-robot_positions[0])/measured_r
-        H[0,2*landmark_id_in_mu+2] = (landmark_coords[1]-robot_positions[1])/measured_r
-        H[1,2*landmark_id_in_mu+1] = -(landmark_coords[1]-robot_positions[1])/(measured_r**2)
-        H[1,2*landmark_id_in_mu+2] = (landmark_coords[0]-robot_positions[0])/(measured_r**2)
+        H[0,2*landmark_id_in_mu+1] = (positions[0]-robot_positions[0])/est_r
+        H[0,2*landmark_id_in_mu+2] = (positions[1]-robot_positions[1])/est_r
+        H[1,2*landmark_id_in_mu+1] = -(positions[1]-robot_positions[1])/(est_r**2)
+        H[1,2*landmark_id_in_mu+2] = (positions[0]-robot_positions[0])/(est_r**2)
+
+        # H = np.zeros((2,len(self.mu)))
+        # H[0,:3] = np.array([-dx / r, -dy / r, 0])
+        # H[1,:3] = np.array([dy / r**2, -dx / r**2, -1])
+        
+        # H[0,3+2*i : 3+2*(i+1)] = np.array([dx / r, dy / r])
+        # H[1,3+2*i : 3+2*(i+1)] = np.array([-dy / r**2, dx / r**2])
+
         #correction step
-        Q = np.diag((self.merror_r,self.merror_alpha))
+        Q = np.diag([self.merror_r**2,self.merror_alpha**2])
         K = self.sigma @ (H.T @ np.linalg.inv( (H @ self.sigma @ H.T) + Q))
         assert -np.pi < measured_alpha - est_alpha < np.pi
         # update mu
@@ -158,12 +173,63 @@ class EKFSLAM:
         # print(f"{self.mu} = {self.mu} + ({K} * {np.array([measured_r, measured_alpha])} - {np.array([est_r, est_alpha])}")
  
         #print((K @ (np.array([measured_r, measured_alpha]) - np.array([est_r, est_alpha]))))
-        self.mu = self.mu + (K @ (np.array([measured_r, measured_alpha]) - np.array([est_r, est_alpha])))
+        self.mu += (K @ (np.array([measured_r - est_r, self.difference_angle(measured_alpha,est_alpha)])))
         quark = (K @ (np.array([measured_r, measured_alpha]) - np.array([est_r, est_alpha])))
         #update sigma
         self.sigma = (np.identity(self.sigma.shape[0]) - (K @ H) ) @ self.sigma
         
         return measured_r, measured_alpha, est_r, est_alpha, quark
+
+    
+    def difference_angle(self, angle1, angle2):
+        difference = (angle1 - angle2) % (2*np.pi) 
+        difference = np.where(difference > np.pi, difference - 2*np.pi, difference)
+        return difference
+
+
+    def correction_pro(self, id, landmark_position_measured) -> None:
+        # landmark_position_measured = np.array([landmark_position_measured[1], landmark_position_measured[0]])
+
+        robot_positions, robot_error = self.get_robot_pose()
+        r_meas = np.sqrt((landmark_position_measured[0]-robot_positions[0])**2 + (landmark_position_measured[1]-robot_positions[1])**2)
+        alpha_meas = np.arctan2((landmark_position_measured[1]-robot_positions[1]),(landmark_position_measured[0]-robot_positions[0])) - robot_positions[2]
+
+        N = int((len(self.mu)-3)/2)
+        # i = self.ids.index(id)
+        i = int(self.map[int(id)])-1
+
+        x_lm, y_lm = self.mu[3+2*i : 3+2*(i+1)]
+        # x_bot, y_bot, theta_bot, stdev_bot = self.get_robot_pose()
+        x_bot, y_bot, theta_bot = robot_positions
+        
+        dx = x_lm - x_bot
+        dy = y_lm - y_bot
+
+        r = np.sqrt(dx**2 + dy**2)
+        alpha = np.arctan2(dy,dx) - theta_bot
+
+        H = np.zeros((2,3+2*N))
+        H[0,:3] = np.array([-dx / r, -dy / r, 0])
+        H[1,:3] = np.array([dy / r**2, -dx / r**2, -1])
+        
+        H[0,3+2*i : 3+2*(i+1)] = np.array([dx / r, dy / r])
+        H[1,3+2*i : 3+2*(i+1)] = np.array([-dy / r**2, dx / r**2])
+
+        Q = np.diag([self.merror_r**2, self.merror_alpha**2])
+        inv = np.linalg.inv(H @ self.sigma @ H.T + Q)
+        K = self.sigma @ (H.T @ inv)
+
+        err = np.array([r_meas - r, self.difference_angle(alpha_meas, alpha)])
+        correction = K @ err
+
+        # print('[SLAM]: [d_r, d_alpha]: ', err)
+        # print('[SLAM]: id, correction', id, correction)
+        # print('[SLAM]: K: ', K)
+
+        self.mu += correction
+        self.sigma = (np.identity(3+2*N) - K @ H) @ self.sigma
+
+        return
 
     def get_robot_pose(self):
         # read out the robot position and angle from mu variable

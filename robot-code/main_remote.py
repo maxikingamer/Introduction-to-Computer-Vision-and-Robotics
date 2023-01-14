@@ -100,6 +100,9 @@ class Main():
             corners, ids, rejected_img_points = cv2.aruco.detectMarkers(img, aruco_dict, parameters=parameters)
             if ids is not None:
                 for j in range(0, len(ids)):
+                    if ids[j] == 0 or ids[j] > 1000:
+                        continue
+
                     if not(str(ids[j][0]) in list(self.seen_ids.keys())):
                         self.seen_ids[str(ids[j][0])] = 1
                     else:
@@ -125,7 +128,7 @@ class Main():
                     angle = (np.arctan2(pos_y,pos_x))
                     angles.append(angle)
 
-                    positions.append([pos_x + robot_position[1], pos_y + robot_position[0]])
+                    positions.append([pos_x + robot_position[0], pos_y + robot_position[1]])
                     cv2.aruco.drawDetectedMarkers(img, corners)
                     cv2.drawFrameAxes(img, self.camera.camera_matrix, self.camera.dist_coeffs, rvec, tvec, 0.048)
 
@@ -230,6 +233,8 @@ class Main():
                 for i, id in enumerate(ids):
                     if self.slam.id_never_seen_before(id[0]):
                         self.slam.add_landmark(id[0],positions[i],uncertainty)
+                    self.input.addstr(7, 0, f"Landmark positions: {positions[i]}")
+                    self.slam.correction_pro(id[0], positions[i])
                     # measured_r, measured_alpha, est_r, est_alpha, quark = self.slam.correction(id[0],positions[i])
                     # print("landmark estimated positions:", self.slam.get_landmark_positions())
 
@@ -249,9 +254,9 @@ class Main():
 
             landmark_estimated_ids = list(self.slam.map.keys())
             landmark_estimated_positions = landmark_estimated_positions.reshape(int(len(landmark_estimated_ids)),2)
-            landmark_estimated_positions = [[landmark_estimated_positions[i][1],landmark_estimated_positions[i][0]] for i in range(len(landmark_estimated_positions))]
+            # landmark_estimated_positions = [[landmark_estimated_positions[i][1],landmark_estimated_positions[i][0]] for i in range(len(landmark_estimated_positions))]
             landmark_estimated_stdevs = landmark_estimated_stdevs.diagonal().reshape(int(len(landmark_estimated_ids)),2)
-            landmark_estimated_stdevs = [[landmark_estimated_stdevs[i][1],landmark_estimated_stdevs[i][0]] for i in range(len(landmark_estimated_stdevs))]
+            # landmark_estimated_stdevs = [[landmark_estimated_stdevs[i][1],landmark_estimated_stdevs[i][0]] for i in range(len(landmark_estimated_stdevs))]
             # create message
             msg = Message(
                 id = self.count,
