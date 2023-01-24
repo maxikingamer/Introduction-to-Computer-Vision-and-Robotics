@@ -11,6 +11,7 @@ class Main():
 
         a_star = A_Star(discretizer.middle_point[:2], [100,100], discretizer.world_map)
         path = a_star.find_path()
+        discretizer.pad_path()
         plt.figure('Cost map')
         d=a_star.d[1:world_coords[0]+1,1:world_coords[1]+1]
         plt.imshow(d,cmap='jet')

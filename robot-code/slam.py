@@ -125,60 +125,52 @@ class EKFSLAM:
         :param landmark_id: the id of the detected aruco marker
         :param landmark_coords: the [x,y]-coordinates of the aruco marker
         """
-        # landmark_coords = [landmark_coords[1],landmark_coords[0]]
-        landmark_id_in_mu = int(self.map[landmark_id])-1
-        #positions, errors = self.get_landmark_x_y(landmark_id_in_mu)
-        positions = self.mu[3+2*landmark_id_in_mu : 3+2*(landmark_id_in_mu+1)]
         robot_positions, robot_error = self.get_robot_pose()
 
-        #estimated distance and angle to landmark
-        est_r = np.sqrt((positions[0]-robot_positions[0])**2 + (positions[1]-robot_positions[1])**2)
-        est_alpha = np.arctan2((positions[1]-robot_positions[1]),(positions[0]-robot_positions[0])) - robot_positions[2] 
-        #print(est_alpha)
         #measured distance and angle to landmark
         measured_r = np.sqrt((landmark_coords[0]-robot_positions[0])**2 + (landmark_coords[1]-robot_positions[1])**2)
         measured_alpha = np.arctan2((landmark_coords[1]-robot_positions[1]),(landmark_coords[0]-robot_positions[0])) - robot_positions[2]
-        #print(measured_alpha)
-    
+
+        landmark_id_in_mu = int(self.map[landmark_id])
+        positions, errors = self.get_landmark_x_y(landmark_id_in_mu)
+        # positions = self.mu[3+2*landmark_id_in_mu : 3+2*(landmark_id_in_mu+1)]
+        # robot_positions, robot_error = self.get_robot_pose()
+      
+        #precomputation for derrivatives  
         x_bot, y_bot, theta_bot = robot_positions
         x_lm, y_lm = positions
         dx = x_lm - x_bot
         dy = y_lm - y_bot
+
+        #estimated distance and angle to landmark
+        est_r = np.sqrt(dx**2 + dy**2)
+        est_alpha = np.arctan2(dy,dx) - theta_bot
+
         #compute matrix H
         H = np.zeros((2,len(self.mu)))
-        H[0,0] = -(positions[0]-robot_positions[0])/est_r
-        H[0,1] = -(positions[1]-robot_positions[1])/est_r
+        H[0,0] = -dx/est_r
+        H[0,1] = -dy/est_r
         H[0,2] = 0
-        H[1,0] = (positions[1]-robot_positions[1])/(est_r**2)
-        H[1,1] = -(positions[0]-robot_positions[0])/(est_r**2)
+        H[1,0] = dy/(est_r**2)
+        H[1,1] = -dx/(est_r**2)
         H[1,2] = -1
-        H[0,2*landmark_id_in_mu+1] = (positions[0]-robot_positions[0])/est_r
-        H[0,2*landmark_id_in_mu+2] = (positions[1]-robot_positions[1])/est_r
-        H[1,2*landmark_id_in_mu+1] = -(positions[1]-robot_positions[1])/(est_r**2)
-        H[1,2*landmark_id_in_mu+2] = (positions[0]-robot_positions[0])/(est_r**2)
-
-        # H = np.zeros((2,len(self.mu)))
-        # H[0,:3] = np.array([-dx / r, -dy / r, 0])
-        # H[1,:3] = np.array([dy / r**2, -dx / r**2, -1])
-        
-        # H[0,3+2*i : 3+2*(i+1)] = np.array([dx / r, dy / r])
-        # H[1,3+2*i : 3+2*(i+1)] = np.array([-dy / r**2, dx / r**2])
+        H[0,2*landmark_id_in_mu+1] = dx/est_r
+        H[0,2*landmark_id_in_mu+2] = dy/est_r
+        H[1,2*landmark_id_in_mu+1] = -dy/(est_r**2)
+        H[1,2*landmark_id_in_mu+2] = dx/(est_r**2)
 
         #correction step
         Q = np.diag([self.merror_r**2,self.merror_alpha**2])
         K = self.sigma @ (H.T @ np.linalg.inv( (H @ self.sigma @ H.T) + Q))
         assert -np.pi < measured_alpha - est_alpha < np.pi
+
         # update mu
-        # formula changed but the result should be identical to the one provided in the pdf
-        # print(f"{self.mu} = {self.mu} + ({K} * {np.array([measured_r, measured_alpha])} - {np.array([est_r, est_alpha])}")
- 
-        #print((K @ (np.array([measured_r, measured_alpha]) - np.array([est_r, est_alpha]))))
         self.mu += (K @ (np.array([measured_r - est_r, self.difference_angle(measured_alpha,est_alpha)])))
-        quark = (K @ (np.array([measured_r, measured_alpha]) - np.array([est_r, est_alpha])))
+
         #update sigma
         self.sigma = (np.identity(self.sigma.shape[0]) - (K @ H) ) @ self.sigma
         
-        return measured_r, measured_alpha, est_r, est_alpha, quark
+        return measured_r, measured_alpha, est_r, est_alpha
 
     
     def difference_angle(self, angle1, angle2):

@@ -10,6 +10,7 @@ class A_Star:
         self.goal = goal
         self.world_map=np.ones((obst.shape[0]+2,obst.shape[1]+2))
         self.world_map[1:obst.shape[0]+1,1:obst.shape[0]+1]=obst
+        self.path = []
 
         self.d=np.full((self.world_map.shape[0],self.world_map.shape[1]), np.inf)
         self.d[self.start[0]+1,self.start[1]+1]=distance.euclidean(self.start, self.goal)
@@ -23,7 +24,8 @@ class A_Star:
     def find_path(self):
         self.search_path()
         [px,py]=self.reconstruct_path()
-        return [px,py]
+        self.path = [px,py]
+        return self.path
 
     def find_min_node(self):
         tmp=np.array(self.d)
@@ -41,21 +43,22 @@ class A_Star:
             # get a new node
             v=[u[0]+self.moves[i,0], u[1]+self.moves[i,1]]
             # if the new node is not an obstacle and it is not marked as visited
-            if not self.world_map[v[0],v[1]] and self.q[v[0],v[1]]:
-                # compute distance from previuos node to the new node
-                dx=math.sqrt(pow(u[0]-v[0],2)+pow(u[1]-v[1],2))
-                # compute distance from the start node to the new node
-                g=self.d[u[0],u[1]]+dx
-                # compute distance from current node to end note by manhattan heuristic
-                # h=np.abs(v[0]-gx)+np.abs(v[1]-gy)
-                h=distance.euclidean(u, self.goal)
-                f=g+h
-                # if new distance is shorter than previous distance the update
-                if f<self.d[v[0],v[1]]:
-                    # update distance
-                    self.d[v[0],v[1]]=f
-                    # remember from which node came
-                    self.cameFrom[:,v[0],v[1]]=[u[0],u[1]]
+            if (v[0]>0) & (v[0]<self.world_map.shape[0]) & (v[1]>0) & (v[1]<self.world_map.shape[1]):
+                if not self.world_map[v[0],v[1]] and self.q[v[0],v[1]]:
+                    # compute distance from previuos node to the new node
+                    dx=math.sqrt(pow(u[0]-v[0],2)+pow(u[1]-v[1],2))
+                    # compute distance from the start node to the new node
+                    g=self.d[u[0],u[1]]+dx
+                    # compute distance from current node to end note by manhattan heuristic
+                    # h=np.abs(v[0]-gx)+np.abs(v[1]-gy)
+                    h=distance.euclidean(u, self.goal)
+                    f=g+h
+                    # if new distance is shorter than previous distance the update
+                    if f<self.d[v[0],v[1]]:
+                        # update distance
+                        self.d[v[0],v[1]]=f
+                        # remember from which node came
+                        self.cameFrom[:,v[0],v[1]]=[u[0],u[1]]
 
     # perform path search				
     def search_path(self):
@@ -93,3 +96,30 @@ class A_Star:
             if x==sx and y==sy:
                 break
         return px, py
+
+    def plan_line(self, start, end):
+        distance = (np.sqrt((start[0] - end[0])**2 + (start[1]-end[1])**2)) / 100
+        angle = np.arctan2(end[1]-start[1], end[0]-start[0])
+        hit_obstacle = False
+        if angle == 0: angle=0.01
+        if distance == 0: distance = 0.01
+        return distance, angle, hit_obstacle
+
+    def plan_trajectory(self, num_ankers):
+        ankers = np.linspace(0,len(self.path[0])-1, num_ankers, dtype="int64")
+        trajectory = []
+        last_angle = 0
+        for i, anker in enumerate(ankers):
+            if i == len(ankers)-1:
+                break
+            start = [self.path[0][anker], self.path[1][anker]]
+            end = [self.path[0][ankers[i+1]], self.path[1][ankers[i+1]]]
+            
+            lenght, angle, hit_obstacle = self.plan_line(start, end)
+            angle = angle - last_angle
+            last_angle += angle
+            trajectory.append([start, end, lenght, angle])
+
+        return trajectory
+
+    

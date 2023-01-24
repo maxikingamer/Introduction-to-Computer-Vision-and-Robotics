@@ -13,6 +13,7 @@ from slam import EKFSLAM
 import math
 from multiprocessing.pool import ThreadPool
 import curses
+from imageProcessing import automatic_brightness_and_contrast, preprocess2
 
 
 class Main():
@@ -25,7 +26,7 @@ class Main():
         self.camera = Camera()
         self.camera_height = 0.285
         self.count = 0
-        self.slam = EKFSLAM(0.05,0.05,0.07,1*np.pi/180)
+        self.slam = EKFSLAM(0.05,0.05,1,60*np.pi/180)
         self.old_pos = [0,0,0]
         self.input = stdscr
         self.speed = 0
@@ -42,19 +43,19 @@ class Main():
         #params.maxThreshold = 256
         # Filter by Area.
         params.filterByArea = True
-        params.minArea = 10**2 * np.pi
+        params.minArea = 20**2 * np.pi
         params.maxArea = 100**2 * np.pi
         # Filter by Color (black=0)
         params.filterByColor = False
         params.blobColor = 0
         #Filter by Circularity
         params.filterByCircularity = True
-        params.minCircularity = 0.8
-        params.maxCircularity = 10000
+        params.minCircularity = 0.75
+        params.maxCircularity = 1
         # Filter by Convexity
         params.filterByConvexity = False
         params.minConvexity = 0.9
-        params.maxConvexity = 1000
+        params.maxConvexity = 1
         # Filter by InertiaRatio
         params.filterByInertia = True
         params.minInertiaRatio = 0.1
@@ -81,20 +82,20 @@ class Main():
                                     np.cos(robot_position[2])]])
 
         if img is not None:
-
-            # gray = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
-            # smoothed = cv2.GaussianBlur(gray, (5,5), sigmaX=9, sigmaY=9, borderType = cv2.BORDER_DEFAULT)
-            # thresh = cv2.adaptiveThreshold(smoothed, 255, cv2.ADAPTIVE_THRESH_MEAN_C, cv2.THRESH_BINARY, 65, 10)
+            img = preprocess2(automatic_brightness_and_contrast(img))
+            gray = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
+            smoothed = cv2.GaussianBlur(gray, (5,5), sigmaX=9, sigmaY=9, borderType = cv2.BORDER_DEFAULT)
+            thresh = cv2.adaptiveThreshold(smoothed, 255, cv2.ADAPTIVE_THRESH_MEAN_C, cv2.THRESH_BINARY, 65, 10)
             # Set up the SimpleBlobdetector with default parameters.
             
             # Get keypoints
-            # keypoints = self.detector.detect(thresh)
-            # # detect green
-            # lab = cv2.cvtColor(img, cv2.COLOR_RGB2LAB)
-            # # store the a-channel
-            # a_channel = lab[:,:,1]
-            # # Automate threshold using Otsu method
-            # th = cv2.threshold(a_channel,127,255,cv2.THRESH_BINARY_INV+cv2.THRESH_OTSU)[1]
+            keypoints = self.detector.detect(thresh)
+            # detect green
+            lab = cv2.cvtColor(img, cv2.COLOR_RGB2LAB)
+            # store the a-channel
+            a_channel = lab[:,:,1]
+            # Automate threshold using Otsu method
+            th = cv2.threshold(a_channel,200,255,cv2.THRESH_BINARY_INV+cv2.THRESH_OTSU)[1]
             
             # detect aruco markers
             corners, ids, rejected_img_points = cv2.aruco.detectMarkers(img, aruco_dict, parameters=parameters)
@@ -110,7 +111,6 @@ class Main():
 
                     if self.seen_ids[str(ids[j][0])] < 5:
                         continue
-
                     rvec, tvec, _ = cv2.aruco.estimatePoseSingleMarkers(corners[j], 0.048, self.camera.camera_matrix, self.camera.dist_coeffs)
                     # (rvec - tvec).any()
 
@@ -134,23 +134,36 @@ class Main():
 
                     accepted_ids.append(ids[j])
 
-            # for keypoint in keypoints:
-            #     x = int(keypoint.pt[0])
-            #     y = int(keypoint.pt[1])
-            #     s = keypoint.size
-            #     r = int(math.floor(s/2))
-            #     if th[y-r:y+r,x-r:x+r].sum() > 100:
-            #         cv2.circle(img,(x, y), r, color=(0,255,0))
-            #     else:
-            #         cv2.circle(img,(x, y), r, color=(0,0,255))
+
+            discs = []
+            for keypoint in keypoints:
+                x = int(keypoint.pt[0])
+                y = int(keypoint.pt[1])
+                self.input.addstr(10, 0, f'[{x},{y}]')
+                s = keypoint.size
+                r = int(math.floor(s/2))
+                if th[y-r:y+r,x-r:x+r].sum() > 100:
+                    cv2.circle(img,(x, y), r, color=(0,255,0))
+                else:
+                    cv2.circle(img,(x, y), r, color=(0,0,255))
+
+                box = np.array([[[x-r,y-r],[x-r,y+r],[x+r,y-r],[x+r,y+r]]], dtype="double")
+                
+                rvec, tvec, _ = cv2.aruco.estimatePoseSingleMarkers(box, 0.05, self.camera.camera_matrix, self.camera.dist_coeffs)
+                hypothenuse = np.linalg.norm(tvec)
+                distance = np.sqrt(np.abs(hypothenuse**2 - self.camera_height**2))
+                pos_x = tvec[0][0][0]
+                pos_y = np.sqrt(np.abs(distance**2 - pos_x**2))
+                position = [pos_x + robot_position[0], pos_y + robot_position[1]]
+                angle = (np.arctan2(pos_y,pos_x))
+                discs.append([position, distance, angle])
 
             else:
                 ids = []
         else:
             ids = []
 
-
-        return img, accepted_ids, positions, distances, angles
+        return img, accepted_ids, positions, distances, angles, discs
 
     def react(self, c):
         '''
@@ -191,39 +204,11 @@ class Main():
             time0 = time.time()
 
             # imaginary processing
-            img, ids, positions, distances, angles = self.transformImage(raw_img, new_pos)
+            img, ids, positions, distances, angles, discs = self.transformImage(raw_img, new_pos)
 
             #########SLAM#######
-            uncertainty = [0.1,0.1]
+            uncertainty = [0.6,0.6]
 
-            """ 
-            if np.abs(self.old_pos[2] - new_pos[2]) <= math.pi/180:
-                self.input.addstr(3, 0, f"driving straight")
-                # self.input.addstr(0, 0, f"[{x},{y},{angle}]")
-                if backwards:
-                    self.slam.predict(vehicle, self.tread, "straight", -distance_travelled)
-                else:
-                    self.slam.predict(vehicle, self.tread, "straight", distance_travelled)
-            else:
-                # center_x = (new_pos[1] - np.tan((math.pi/2) - new_pos[2]) - self.old_pos[1] + np.tan((math.pi/2) - self.old_pos[2])) / (np.tan((math.pi/2) - new_pos[2]) - np.tan((math.pi/2) - self.old_pos[2]))
-                # center_y = (np.tan((math.pi/2) - new_pos[2]) * center_x + new_pos[1] - np.tan((math.pi/2) - new_pos[2]))
-                # R = np.linalg.norm(np.array([center_x, center_y]) - np.array([self.old_pos[0], self.old_pos[1]]))
-                # alpha = 2 * (np.arctan2(new_pos[0] - self.old_pos[0], new_pos[1] - self.old_pos[1]) - new_pos[2])
-
-                b_new = new_pos[1] - np.tan(math.pi/2 + new_pos[2]) * new_pos[0]
-                b_old = self.old_pos[1] - np.tan(math.pi/2 + self.old_pos[2]) * self.old_pos[0]
-                m_new = np.tan(math.pi/2 + new_pos[2])
-                m_old = np.tan(math.pi/2 + self.old_pos[2])
-
-                center_x = (b_new - b_old) / (m_new - m_old)
-                center_y = m_new * center_x + b_new
-                R = np.linalg.norm(np.array([center_x, center_y]) - np.array([self.old_pos[0], self.old_pos[1]]))
-                alpha = (2 * np.sin(distance_travelled/(2*R)))  % (2 * np.pi)
-                self.input.addstr(20, 0, f"old angle form: {alpha}")
-                #alpha =  (2* (math.radians(math.degrees(direction) - math.degrees(self.old_pos[2])))) % (2* np.pi)
-                #self.input.addstr(21, 0, f"new angle form: {alpha}")
-                self.input.addstr(3, 0, f"turniiiiiiing!!!") 
-            """
             self.slam.predict(vehicle, self.tread)
 
             self.old_pos = new_pos
@@ -234,8 +219,8 @@ class Main():
                     if self.slam.id_never_seen_before(id[0]):
                         self.slam.add_landmark(id[0],positions[i],uncertainty)
                     self.input.addstr(7, 0, f"Landmark positions: {positions[i]}")
-                    self.slam.correction_pro(id[0], positions[i])
-                    # measured_r, measured_alpha, est_r, est_alpha, quark = self.slam.correction(id[0],positions[i])
+                    #self.slam.correction_pro(id[0], positions[i])
+                    measured_r, measured_alpha, est_r, est_alpha = self.slam.correction(id[0],positions[i])
                     # print("landmark estimated positions:", self.slam.get_landmark_positions())
 
                     # self.input.addstr(15, 0, f"r-diff={measured_r-est_r}")
@@ -258,6 +243,21 @@ class Main():
             landmark_estimated_stdevs = landmark_estimated_stdevs.diagonal().reshape(int(len(landmark_estimated_ids)),2)
             # landmark_estimated_stdevs = [[landmark_estimated_stdevs[i][1],landmark_estimated_stdevs[i][0]] for i in range(len(landmark_estimated_stdevs))]
             # create message
+            distances.extend([disc[1] for disc in discs])
+            angles.extend([disc[2] for disc in discs])
+            angles = [angle - math.pi/2 for angle in angles]
+            self.input.addstr(14, 0, f"{angles}")
+            positions.extend([disc[0] for disc in discs])
+            ids.extend([420+disc_id for disc_id, disc in enumerate(discs)])
+
+            landmark_estimated_positions = landmark_estimated_positions.tolist()
+            landmark_estimated_positions.extend([disc[0] for disc in discs])
+
+            landmark_estimated_ids.extend([420+disc_id for disc_id, disc in enumerate(discs)])
+
+            landmark_estimated_stdevs = landmark_estimated_stdevs.tolist()
+            landmark_estimated_stdevs.extend([[0,0] for disc in discs])
+
             msg = Message(
                 id = self.count,
                 timestamp = time0,
@@ -265,14 +265,14 @@ class Main():
                 
                 landmark_ids = ids,
                 landmark_rs = distances,
-                landmark_alphas = [angle - math.pi/2 for angle in angles],
+                landmark_alphas = angles,
                 landmark_positions = positions,
 
                 landmark_estimated_ids = landmark_estimated_ids,
                 landmark_estimated_positions = landmark_estimated_positions,
                 landmark_estimated_stdevs = landmark_estimated_stdevs,
 
-                robot_position = np.array([-slam_position[1], slam_position[0]]),
+                robot_position = np.array([slam_position[1], -slam_position[0]]),
                 robot_theta = slam_position[2] + math.pi/2,
                 robot_stdev = slam_sigma.diagonal(),
             )
@@ -317,7 +317,10 @@ class Main():
             vehicle.stop()  # finally stop movement
             landmarks = np.array(self.slam.mu[3:]) * 100
             landmarks = landmarks.reshape(int(landmarks.shape[0]/2), 2)
-            landmarks = np.append(landmarks, np.array(list(self.slam.map.keys())).reshape(landmarks.shape[0],1), axis=1)
+            object_ids = []
+            for key in np.array(list(self.slam.map.keys())):
+                object_ids.append(int(key % 3))
+            landmarks = np.append(landmarks, np.array(object_ids).reshape(int(landmarks.shape[0]),1), axis=1)
             np.savetxt("landmarks.csv", landmarks, delimiter=",")
             self.close()
 
