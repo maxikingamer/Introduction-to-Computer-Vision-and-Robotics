@@ -13,7 +13,7 @@ from slam import EKFSLAM
 import math
 from multiprocessing.pool import ThreadPool
 import curses
-from imageProcessing import automatic_brightness_and_contrast, preprocess2
+from imageProcessing import automatic_brightness_and_contrast, preprocess2, detectRedCircle, detectGreenCircle
 
 
 class Main():
@@ -34,36 +34,7 @@ class Main():
         self.tread = 0.1392
         self.radius = 0.0280 
         self.seen_ids = {}
-
-        # print("camera_matrix", self.camera.camera_matrix)
-        # print("camera_", self.camera.dist_coeffs)
-        params = cv2.SimpleBlobDetector_Params()
-        # Change thresholds
-        #params.minThreshold = 1
-        #params.maxThreshold = 256
-        # Filter by Area.
-        params.filterByArea = True
-        params.minArea = 20**2 * np.pi
-        params.maxArea = 100**2 * np.pi
-        # Filter by Color (black=0)
-        params.filterByColor = False
-        params.blobColor = 0
-        #Filter by Circularity
-        params.filterByCircularity = True
-        params.minCircularity = 0.75
-        params.maxCircularity = 1
-        # Filter by Convexity
-        params.filterByConvexity = False
-        params.minConvexity = 0.9
-        params.maxConvexity = 1
-        # Filter by InertiaRatio
-        params.filterByInertia = True
-        params.minInertiaRatio = 0.1
-        params.maxInertiaRatio = 1
-        # Distance Between Blobs
-        params.minDistBetweenBlobs = 0.1
-        # Do blob detecting 
-        self.detector = cv2.SimpleBlobDetector_create(params)
+        self.translation_matrix = [[ 1.00000001e+00, 6.76287665e-10], [ 1.24710522e+00, -1.32404765e-01]]
 
         self.run()
 
@@ -82,23 +53,32 @@ class Main():
                                     np.cos(robot_position[2])]])
 
         if img is not None:
-            img = preprocess2(automatic_brightness_and_contrast(img))
-            gray = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
-            smoothed = cv2.GaussianBlur(gray, (5,5), sigmaX=9, sigmaY=9, borderType = cv2.BORDER_DEFAULT)
-            thresh = cv2.adaptiveThreshold(smoothed, 255, cv2.ADAPTIVE_THRESH_MEAN_C, cv2.THRESH_BINARY, 65, 10)
-            # Set up the SimpleBlobdetector with default parameters.
+            # img = automatic_brightness_and_contrast(img)
+            # disc_img = np.copy(img[int(img.shape[0]/2):,:,:])
+
+            # gray = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
+            # gray_blurred = cv2.GaussianBlur(gray, (3,3), sigmaX=9, sigmaY=9, borderType = cv2.BORDER_DEFAULT)
+            # thresh = cv2.threshold(disc_img, 120, 255, cv2.THRESH_BINARY)[1] 
             
             # Get keypoints
-            keypoints = self.detector.detect(thresh)
+            # keypoints = self.detector.detect(thresh)
+            keypoints_red, thresh_red = detectRedCircle(img)
+            keypoints_green, thresh_green = detectGreenCircle(img)
+            self.input.addstr(10, 0, f"Green: {len(keypoints_green)}")
+            self.input.addstr(11, 0, f"Red: {len(keypoints_red)}")
+
+            keypoints = keypoints_green + keypoints_red
             # detect green
             lab = cv2.cvtColor(img, cv2.COLOR_RGB2LAB)
             # store the a-channel
             a_channel = lab[:,:,1]
             # Automate threshold using Otsu method
-            th = cv2.threshold(a_channel,200,255,cv2.THRESH_BINARY_INV+cv2.THRESH_OTSU)[1]
-            
+            th = cv2.threshold(a_channel,0.5,1,cv2.THRESH_BINARY_INV+cv2.THRESH_OTSU)[1]
+
             # detect aruco markers
             corners, ids, rejected_img_points = cv2.aruco.detectMarkers(img, aruco_dict, parameters=parameters)
+            # marker_box = np.zeros(1)
+            # disc_box = np.zeros(1)
             if ids is not None:
                 for j in range(0, len(ids)):
                     if ids[j] == 0 or ids[j] > 1000:
@@ -111,6 +91,8 @@ class Main():
 
                     if self.seen_ids[str(ids[j][0])] < 5:
                         continue
+                    marker_box = np.array([[int(corners[j][0][0][0]), int(corners[j][0][0][1])], [int(corners[j][0][2][0]), int(corners[j][0][2][1])]])
+                    cv2.rectangle(img, (int(corners[j][0][0][0]), int(corners[j][0][0][1])), (int(corners[j][0][2][0]), int(corners[j][0][2][1])), color = (0, 255, 0), thickness=2)
                     rvec, tvec, _ = cv2.aruco.estimatePoseSingleMarkers(corners[j], 0.048, self.camera.camera_matrix, self.camera.dist_coeffs)
                     # (rvec - tvec).any()
 
@@ -133,33 +115,48 @@ class Main():
                     cv2.drawFrameAxes(img, self.camera.camera_matrix, self.camera.dist_coeffs, rvec, tvec, 0.048)
 
                     accepted_ids.append(ids[j])
-
+                
+            else:
+                ids = []
 
             discs = []
-            for keypoint in keypoints:
+
+            for i, keypoint in enumerate(keypoints):
                 x = int(keypoint.pt[0])
                 y = int(keypoint.pt[1])
-                self.input.addstr(10, 0, f'[{x},{y}]')
                 s = keypoint.size
                 r = int(math.floor(s/2))
-                if th[y-r:y+r,x-r:x+r].sum() > 100:
-                    cv2.circle(img,(x, y), r, color=(0,255,0))
+
+                if th[y-r:y+r,x-r:x+r].sum() > (10*r**2*math.pi)/11:
+                    cv2.circle(img,(x, y), r, color=(255,255,255)) # green circle -> white
                 else:
-                    cv2.circle(img,(x, y), r, color=(0,0,255))
+                    cv2.circle(img,(x, y), r, color=(0,0,0)) # red circle -> black
 
                 box = np.array([[[x-r,y-r],[x-r,y+r],[x+r,y-r],[x+r,y+r]]], dtype="double")
+                disc_box = self.translation_matrix @ np.array([[x-r,y-r], [x+r,y+r]])
+
+                cv2.rectangle(img, (int(disc_box[0][0]), int(disc_box[0][1])), (int(disc_box[1][0]), int(disc_box[1][1])), color = (0, 0, 255), thickness=2)
                 
                 rvec, tvec, _ = cv2.aruco.estimatePoseSingleMarkers(box, 0.05, self.camera.camera_matrix, self.camera.dist_coeffs)
                 hypothenuse = np.linalg.norm(tvec)
                 distance = np.sqrt(np.abs(hypothenuse**2 - self.camera_height**2))
                 pos_x = tvec[0][0][0]
                 pos_y = np.sqrt(np.abs(distance**2 - pos_x**2))
+
+                direction_global_coords = rotation_matrix @ np.array([pos_x,pos_y]) 
+                pos_x = direction_global_coords[0]
+                pos_y = direction_global_coords[1]
+
                 position = [pos_x + robot_position[0], pos_y + robot_position[1]]
                 angle = (np.arctan2(pos_y,pos_x))
                 discs.append([position, distance, angle])
 
-            else:
-                ids = []
+            # if marker_box.shape[0] > 1:
+            #     if disc_box.shape[0] > 1:
+            #         translation_matrix = marker_box @ np.linalg.inv(disc_box)
+            #         print(translation_matrix)
+            #         time.sleep(60)
+
         else:
             ids = []
 
@@ -193,7 +190,7 @@ class Main():
             #    new_pos = self.old_pos
             self.input.addstr(5, 0, f"SLAM Position: [{new_pos[0]},{new_pos[1]},{new_pos[2]}]")
             # new_pos = [x,y,angle]
-            self.input.addstr(6, 0, f"EV3 Position: {ev3_pos}")
+            self.input.addstr(6, 0, f"EV3 Position: {ev3_pos}") # fancy print
 
             direction = np.arctan2(new_pos[1]-self.old_pos[1],new_pos[0]-self.old_pos[0])
 
@@ -218,7 +215,8 @@ class Main():
                 for i, id in enumerate(ids):
                     if self.slam.id_never_seen_before(id[0]):
                         self.slam.add_landmark(id[0],positions[i],uncertainty)
-                    self.input.addstr(7, 0, f"Landmark positions: {positions[i]}")
+                    if id == 11:
+                        self.input.addstr(7, 0, f"Landmark positions: {positions[i]}")
                     #self.slam.correction_pro(id[0], positions[i])
                     measured_r, measured_alpha, est_r, est_alpha = self.slam.correction(id[0],positions[i])
                     # print("landmark estimated positions:", self.slam.get_landmark_positions())
@@ -246,7 +244,7 @@ class Main():
             distances.extend([disc[1] for disc in discs])
             angles.extend([disc[2] for disc in discs])
             angles = [angle - math.pi/2 for angle in angles]
-            self.input.addstr(14, 0, f"{angles}")
+
             positions.extend([disc[0] for disc in discs])
             ids.extend([420+disc_id for disc_id, disc in enumerate(discs)])
 
