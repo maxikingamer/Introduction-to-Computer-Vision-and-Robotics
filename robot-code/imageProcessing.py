@@ -1,5 +1,6 @@
 import cv2
 import numpy as np
+from scipy.ndimage.morphology import binary_closing 
 
 def automatic_brightness_and_contrast(image, clip_hist_percent=1):
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
@@ -56,7 +57,11 @@ def detectRedCircle(img):
     lower = np.array([170,40,40])
     upper = np.array([180,255,255])
     mask = cv2.inRange(hsv, lower, upper)
-    thresh = cv2.bitwise_and(img, img, mask=mask)
+    # mask = cv2.bitwise_and(img, img, mask=mask)
+    # thresh = cv2.threshold(mask, 200, 255, cv2.THRESH_BINARY_INV)
+    thresh = cv2.morphologyEx(mask, cv2.MORPH_OPEN, cv2.getStructuringElement(cv2.MORPH_ELLIPSE,(50,50)))
+    thresh = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, cv2.getStructuringElement(cv2.MORPH_ELLIPSE,(5,5)))
+    
 
     params = cv2.SimpleBlobDetector_Params()
     # Change thresholds
@@ -102,7 +107,9 @@ def detectGreenCircle(img):
     lower = np.array([40,40,40])
     upper = np.array([70,255,255])
     mask = cv2.inRange(hsv, lower, upper)
-    thresh = cv2.bitwise_and(img, img, mask=mask)
+    # thresh = cv2.bitwise_and(img, img, mask=mask)
+    thresh = cv2.morphologyEx(mask, cv2.MORPH_OPEN, cv2.getStructuringElement(cv2.MORPH_ELLIPSE,(50,50)))
+    thresh = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, cv2.getStructuringElement(cv2.MORPH_ELLIPSE,(5,5)))
 
     params = cv2.SimpleBlobDetector_Params()
     # Change thresholds

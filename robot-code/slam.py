@@ -50,8 +50,6 @@ class EKFSLAM:
     def predict(self, vehicle, tread):
         """
         Compute the prediction step as provided in the pdf.
-        INPUT PARAMETERS ARE TO BE DECIDED
-        SINCE WE NEED ACCESS TO THE MOVEMENT 
         """
         sigma = self.sigma[:3,:3]
         l, r = self.get_motor_movement(vehicle)
@@ -59,43 +57,46 @@ class EKFSLAM:
         theta = self.mu[2]
         alpha = (r-l)/w
         sigma_mu = np.array([[self.sigma_l**2,0],[0,self.sigma_r**2]])
+
+        theta = (theta+alpha) % (2*np.pi)   # [0,2*pi]
+        self.mu[2] = theta
+        
         
         #create the matrixes G and V
         if l!=r:
+            new_coords = np.array([self.mu[0],self.mu[1]]) + ((l/alpha) + (w/2)) * np.array([np.sin(theta+alpha) - np.sin(theta),-np.cos(theta+alpha)+np.cos(theta)])
             G = np.array([[1,0,((l/alpha)+(w/2))*(np.cos(theta+alpha)-np.cos(theta))],[0,1,((l/alpha)+(w/2))*(np.sin(theta+alpha)-np.sin(theta))],[0,0,1]])
             A = ((w*r)/(r-l)**2) * (np.sin(theta+alpha) - np.sin(theta)) - ((r+l)/2*(r-l))*np.cos(theta+alpha)
             B = ((w*r)/(r-l)**2) * (-np.cos(theta+alpha) + np.cos(theta)) - ((r+l)/2*(r-l))*np.sin(theta+alpha)
             C = -((w*r)/(r-l)**2) * (np.sin(theta+alpha) - np.sin(theta)) + ((r+l)/2*(r-l))*np.cos(theta+alpha)
             D = -((w*r)/(r-l)**2) * (-np.cos(theta+alpha) + np.cos(theta)) + ((r+l)/2*(r-l))*np.sin(theta+alpha)
-            new_coords = np.array([self.mu[0],self.mu[1]]) + ((l/alpha) + (w/2)) * np.array([np.sin(theta+alpha) - np.sin(theta),-np.cos(theta+alpha)+np.cos(theta)])
-
+            
         else:
+            new_coords = np.array(self.mu[:2]) + l * np.array([np.cos(theta), np.sin(theta)])
             G = np.array([[1,0,-l*np.sin(theta)],[0,1,l*np.cos(theta)],[0,0,1]])
             A = 0.5*(np.cos(theta) + (l/w) * np.sin(theta))
             B = 0.5*(np.sin(theta) - (l/w) * np.cos(theta))
             C = 0.5*(np.cos(theta) - (l/w) * np.sin(theta))
             D = 0.5*(np.sin(theta) + (l/w) * np.cos(theta))
-            new_coords = np.array(self.mu[:2]) + l * np.array([np.cos(theta), np.sin(theta)])
+            
         V = np.array([[A,C],[B,D],[-1/w,1/w]])
 
-        
-        #new coords formula
-        angle = (theta+alpha) % (2*np.pi)
-        # if angle > np.pi:
-        #     angle = angle - 2 * np.pi
-        self.mu[2] = angle
         self.mu[0] = new_coords[0]
         self.mu[1] = new_coords[1]
 
+        
+        # angle = np.where(angle > np.pi, angle - 2*np.pi, angle) # from [0,2*pi] to [-pi,pi]
+        # if angle > np.pi:
+        #     angle = angle - 2 * np.pi
+        
         #new coords direct
         #self.mu[0], self.mu[1], self.mu[2] = vehicle.position
         #self.mu[2] = np.radians(self.mu[2])
-
-        # print("\n SLAM Coords: ", new_coords)
-        # print("\n Vehicle Coords: ", self.mu[:3])
         
         #sigma update
         self.sigma[:3,:3] = (G @ sigma @ G.T) + (V @ sigma_mu @ V.T)
+
+        return theta, alpha
 
         
     def add_landmark(self,landmark_id,coordinates,uncertainty):
@@ -106,9 +107,8 @@ class EKFSLAM:
         :param uncertainty: the uncertainty of the measurment as an iterable with length 2
         """
         # coordinates_fixed = [coordinates[1],coordinates[0]]
-        coordinates_fixed = [coordinates[0],coordinates[1]]
         # extend mu
-        self.mu = np.append(self.mu, coordinates_fixed,axis=0)
+        self.mu = np.append(self.mu, coordinates,axis=0)
         # map the landmark id to its position in the coordinates vector
         self.map[landmark_id] = (len(self.mu)-3)/2
         
@@ -144,7 +144,7 @@ class EKFSLAM:
 
         #estimated distance and angle to landmark
         est_r = np.sqrt(dx**2 + dy**2)
-        est_alpha = np.arctan2(dy,dx) - theta_bot
+        est_alpha = (np.arctan2(dy,dx) - theta_bot) % (2*np.pi)
 
         #compute matrix H
         H = np.zeros((2,len(self.mu)))
@@ -222,6 +222,59 @@ class EKFSLAM:
         self.sigma = (np.identity(3+2*N) - K @ H) @ self.sigma
 
         return
+
+    def correction_direct(self,landmark_id, landmark_dist_angle):
+        """
+        Computes the correction step as provided in the pdf.
+        :param landmark_id: the id of the detected aruco marker
+        :param landmark_coords: the [x,y]-coordinates of the aruco marker
+        """
+        robot_positions, robot_error = self.get_robot_pose()
+
+        #measured distance and angle to landmark
+        measured_r, measured_alpha = landmark_dist_angle
+        
+
+        landmark_id_in_mu = int(self.map[landmark_id])
+        positions, errors = self.get_landmark_x_y(landmark_id_in_mu)
+        # positions = self.mu[3+2*landmark_id_in_mu : 3+2*(landmark_id_in_mu+1)]
+        # robot_positions, robot_error = self.get_robot_pose()
+      
+        #precomputation for derrivatives  
+        x_bot, y_bot, theta_bot = robot_positions
+        x_lm, y_lm = positions
+        dx = x_lm - x_bot
+        dy = y_lm - y_bot
+
+        #estimated distance and angle to landmark
+        est_r = np.sqrt(dx**2 + dy**2) 
+        est_alpha = ((np.arctan2(dy,dx) % (2*np.pi))- theta_bot) % (2*np.pi)
+
+        #compute matrix H
+        H = np.zeros((2,len(self.mu)))
+        H[0,0] = -dx/est_r
+        H[0,1] = -dy/est_r
+        H[0,2] = 0
+        H[1,0] = dy/(est_r**2)
+        H[1,1] = -dx/(est_r**2)
+        H[1,2] = -1
+        H[0,2*landmark_id_in_mu+1] = dx/est_r
+        H[0,2*landmark_id_in_mu+2] = dy/est_r
+        H[1,2*landmark_id_in_mu+1] = -dy/(est_r**2)
+        H[1,2*landmark_id_in_mu+2] = dx/(est_r**2)
+
+        #correction step
+        Q = np.diag([self.merror_r**2,self.merror_alpha**2])
+        K = self.sigma @ (H.T @ np.linalg.inv((H @ self.sigma @ H.T) + Q))
+        assert -np.pi < self.difference_angle(measured_alpha,est_alpha) < np.pi
+
+        # update mu
+        self.mu += (K @ (np.array([measured_r - est_r, self.difference_angle(measured_alpha,est_alpha)])))
+
+        #update sigma
+        self.sigma = (np.identity(self.sigma.shape[0]) - (K @ H) ) @ self.sigma
+        
+
 
     def get_robot_pose(self):
         # read out the robot position and angle from mu variable

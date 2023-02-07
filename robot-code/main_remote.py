@@ -24,17 +24,21 @@ class Main():
         self.keypress_listener = KeypressListener()
         self.publisher = Publisher()
         self.camera = Camera()
-        self.camera_height = 0.285
+        self.camera_height = 0.295
         self.count = 0
-        self.slam = EKFSLAM(0.05,0.05,1,60*np.pi/180)
+        self.slam = EKFSLAM(0.05,0.05,0.1,10*np.pi/180)
         self.old_pos = [0,0,0]
         self.input = stdscr
         self.speed = 0
         self.turn = 0
         self.tread = 0.1392
-        self.radius = 0.0280 
+        self.radius = 0.0280 / 2
         self.seen_ids = {}
         self.translation_matrix = [[ 1.00000001e+00, 6.76287665e-10], [ 1.24710522e+00, -1.32404765e-01]]
+        self.markerPositions_3d = []                                                                                                                                                                                                                                                                                                                                                                                                                            
+        self.markerPositions_2d = []
+        self.tvec_sol = np.loadtxt(r'./tvec_sol.csv',delimiter=",",dtype=float)
+        self.rvec_sol = np.loadtxt(r'./rvec_sol.csv',delimiter=",",dtype=float)
 
         self.run()
 
@@ -53,33 +57,21 @@ class Main():
                                     np.cos(robot_position[2])]])
 
         if img is not None:
-            # img = automatic_brightness_and_contrast(img)
-            # disc_img = np.copy(img[int(img.shape[0]/2):,:,:])
-
-            # gray = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
-            # gray_blurred = cv2.GaussianBlur(gray, (3,3), sigmaX=9, sigmaY=9, borderType = cv2.BORDER_DEFAULT)
-            # thresh = cv2.threshold(disc_img, 120, 255, cv2.THRESH_BINARY)[1] 
-            
             # Get keypoints
-            # keypoints = self.detector.detect(thresh)
+            img = automatic_brightness_and_contrast(img)
             keypoints_red, thresh_red = detectRedCircle(img)
             keypoints_green, thresh_green = detectGreenCircle(img)
             self.input.addstr(10, 0, f"Green: {len(keypoints_green)}")
             self.input.addstr(11, 0, f"Red: {len(keypoints_red)}")
 
             keypoints = keypoints_green + keypoints_red
-            # detect green
-            lab = cv2.cvtColor(img, cv2.COLOR_RGB2LAB)
-            # store the a-channel
-            a_channel = lab[:,:,1]
-            # Automate threshold using Otsu method
-            th = cv2.threshold(a_channel,0.5,1,cv2.THRESH_BINARY_INV+cv2.THRESH_OTSU)[1]
-
+            
             # detect aruco markers
             corners, ids, rejected_img_points = cv2.aruco.detectMarkers(img, aruco_dict, parameters=parameters)
-            # marker_box = np.zeros(1)
-            # disc_box = np.zeros(1)
+
             if ids is not None:
+                self.markerPositions_2d = []
+                self.markerPositions_3d = []
                 for j in range(0, len(ids)):
                     if ids[j] == 0 or ids[j] > 1000:
                         continue
@@ -92,28 +84,39 @@ class Main():
                     if self.seen_ids[str(ids[j][0])] < 5:
                         continue
                     marker_box = np.array([[int(corners[j][0][0][0]), int(corners[j][0][0][1])], [int(corners[j][0][2][0]), int(corners[j][0][2][1])]])
-                    cv2.rectangle(img, (int(corners[j][0][0][0]), int(corners[j][0][0][1])), (int(corners[j][0][2][0]), int(corners[j][0][2][1])), color = (0, 255, 0), thickness=2)
+                    # cv2.rectangle(img, (int(corners[j][0][0][0]), int(corners[j][0][0][1])), (int(corners[j][0][2][0]), int(corners[j][0][2][1])), color = (0, 255, 0), thickness=2)
                     rvec, tvec, _ = cv2.aruco.estimatePoseSingleMarkers(corners[j], 0.048, self.camera.camera_matrix, self.camera.dist_coeffs)
                     # (rvec - tvec).any()
 
                     hypothenuse = np.linalg.norm(tvec)
                     
-                    distance = np.sqrt(np.abs(hypothenuse**2 - self.camera_height**2))
+                    distance = np.sqrt(hypothenuse**2 - self.camera_height**2)
                     distances.append(distance)
-                    pos_x = tvec[0][0][0]
-                    pos_y = np.sqrt(np.abs(distance**2 - pos_x**2))
+                    # pos_x = tvec[0][0][0]
+                    # pos_y = np.sqrt(distance**2 - pos_x**2)
+                    pos_y = -tvec[0][0][0]
+                    pos_x = np.sqrt(distance**2 - pos_y**2)
+
+     
+
+                    angle = np.arctan2(pos_y,pos_x) % (2*np.pi)
+                    angles.append(angle)
 
                     direction_global_coords = rotation_matrix @ np.array([pos_x,pos_y]) 
                     pos_x = direction_global_coords[0]
                     pos_y = direction_global_coords[1]
 
-                    angle = (np.arctan2(pos_y,pos_x))
-                    angles.append(angle)
-
                     positions.append([pos_x + robot_position[0], pos_y + robot_position[1]])
+                    self.input.addstr(9, 0, f"Marker Lovation: {positions}")
                     cv2.aruco.drawDetectedMarkers(img, corners)
                     cv2.drawFrameAxes(img, self.camera.camera_matrix, self.camera.dist_coeffs, rvec, tvec, 0.048)
 
+                    middle_point = corners[j][0][0] + (corners[j][0][2]- corners[j][0][0])/2
+                    self.markerPositions_2d.append([middle_point[0], middle_point[1]])
+                    self.markerPositions_3d.append([pos_x + robot_position[0], pos_y + robot_position[1], 0])
+                    
+                    #img = cv2.circle(img, self.markerPositions_2d[j], 2, (0,0,0), 20)
+                    
                     accepted_ids.append(ids[j])
                 
             else:
@@ -121,44 +124,46 @@ class Main():
 
             discs = []
 
+
+            # if len(self.markerPositions_2d) > 0:
+            #     self.markerPositions_2d = np.array(self.markerPositions_2d)
+            #     self.markerPositions_2d = self.markerPositions_2d.reshape(self.markerPositions_2d.shape[0],2)
+            #     self.markerPositions_3d = np.array(self.markerPositions_3d)
+            #     self.markerPositions_3d = self.markerPositions_3d.reshape(self.markerPositions_3d.shape[0],3)
+            #     ret, self.rvec_sol, self.tvec_sol = cv2.solvePnP(self.markerPositions_3d, self.markerPositions_2d, self.camera.camera_matrix, self.camera.dist_coeffs)
+            #     np.savetxt("rvec_sol.csv", self.rvec_sol, delimiter=",")
+            #     np.savetxt("tvec_sol.csv", self.tvec_sol, delimiter=",")
+                
             for i, keypoint in enumerate(keypoints):
                 x = int(keypoint.pt[0])
                 y = int(keypoint.pt[1])
                 s = keypoint.size
                 r = int(math.floor(s/2))
 
-                if th[y-r:y+r,x-r:x+r].sum() > (10*r**2*math.pi)/11:
-                    cv2.circle(img,(x, y), r, color=(255,255,255)) # green circle -> white
-                else:
-                    cv2.circle(img,(x, y), r, color=(0,0,0)) # red circle -> black
+                if keypoint in keypoints_green: cv2.circle(img,(x, y), r, color=(255,255,255)) # green circle -> white
+                else: cv2.circle(img,(x, y), r, color=(0,0,0)) # red circle -> black
 
-                box = np.array([[[x-r,y-r],[x-r,y+r],[x+r,y-r],[x+r,y+r]]], dtype="double")
-                disc_box = self.translation_matrix @ np.array([[x-r,y-r], [x+r,y+r]])
+                uvPoint = (x,y,0)
+                cameraMatrix_inv = np.linalg.inv(self.camera.camera_matrix)
+                dst, _ = cv2.Rodrigues(self.rvec_sol)
+                dst_inv = np.linalg.inv(dst)
+                leftSideMat  = dst_inv @ cameraMatrix_inv @ uvPoint
+                rightSideMat = dst_inv @ self.tvec_sol
+                s = (rightSideMat[2])/leftSideMat[2]
 
-                cv2.rectangle(img, (int(disc_box[0][0]), int(disc_box[0][1])), (int(disc_box[1][0]), int(disc_box[1][1])), color = (0, 0, 255), thickness=2)
                 
-                rvec, tvec, _ = cv2.aruco.estimatePoseSingleMarkers(box, 0.05, self.camera.camera_matrix, self.camera.dist_coeffs)
-                hypothenuse = np.linalg.norm(tvec)
-                distance = np.sqrt(np.abs(hypothenuse**2 - self.camera_height**2))
-                pos_x = tvec[0][0][0]
-                pos_y = np.sqrt(np.abs(distance**2 - pos_x**2))
+                marker_worldCoords = dst_inv @ (s * cameraMatrix_inv @ uvPoint - self.tvec_sol)
+                self.input.addstr(8, 0, f"Disc Lovation: {marker_worldCoords}")
 
-                direction_global_coords = rotation_matrix @ np.array([pos_x,pos_y]) 
-                pos_x = direction_global_coords[0]
-                pos_y = direction_global_coords[1]
-
-                position = [pos_x + robot_position[0], pos_y + robot_position[1]]
-                angle = (np.arctan2(pos_y,pos_x))
+                position = [marker_worldCoords[0], marker_worldCoords[1]]         
+                distance = 0  
+                angle = 0    
                 discs.append([position, distance, angle])
-
-            # if marker_box.shape[0] > 1:
-            #     if disc_box.shape[0] > 1:
-            #         translation_matrix = marker_box @ np.linalg.inv(disc_box)
-            #         print(translation_matrix)
-            #         time.sleep(60)
 
         else:
             ids = []
+        self.markerPositions_2d = []
+        self.markerPositions_3d = []
 
         return img, accepted_ids, positions, distances, angles, discs
 
@@ -203,28 +208,34 @@ class Main():
             # imaginary processing
             img, ids, positions, distances, angles, discs = self.transformImage(raw_img, new_pos)
 
-            #########SLAM#######
-            uncertainty = [0.6,0.6]
 
-            self.slam.predict(vehicle, self.tread)
+            # self.input.addstr(15, 0, f"landmark_x: {positions[0][0]}, landmark_y: {positions[0][1]}, landmark_theta: {np.degrees(angles[0])}") 
+            #########SLAM#######
+            uncertainty = [0.1,0.1]
+
+            theta, alpha = self.slam.predict(vehicle, self.tread)
+            self.input.addstr(0, 0, f"Robo Angle: {round(np.degrees(theta),4)} / Turning Angle: {round(np.degrees(alpha),4)}")
 
             self.old_pos = new_pos
             
-            
-            if len(ids) > 0:
-                for i, id in enumerate(ids):
-                    if self.slam.id_never_seen_before(id[0]):
-                        self.slam.add_landmark(id[0],positions[i],uncertainty)
-                    if id == 11:
-                        self.input.addstr(7, 0, f"Landmark positions: {positions[i]}")
-                    #self.slam.correction_pro(id[0], positions[i])
-                    measured_r, measured_alpha, est_r, est_alpha = self.slam.correction(id[0],positions[i])
-                    # print("landmark estimated positions:", self.slam.get_landmark_positions())
+            try:
+                if len(ids) > 0:
+                    for i, id in enumerate(ids):
+                        if self.slam.id_never_seen_before(id[0]):
+                            self.slam.add_landmark(id[0],positions[i],uncertainty)
+                            self.input.addstr(7, 0, f"Landmark positions: {positions[i]}")
+                        # self.slam.correction_pro(id[0], positions[i])
+                        # measured_r, measured_alpha, est_r, est_alpha = self.slam.correction(id[0],positions[i])
+                        measured_r, measured_alpha, est_r, est_alpha, dx, dy = self.slam.correction_direct(id[0],(distances[i],angles[i]))
+                        self.input.addstr(3, 0, f"Estimated Alpha: {round(np.degrees(est_alpha),4)} / Measured Alpha: {round(np.degrees(measured_alpha),4)}")
+                        self.input.addstr(4, 0, f"Dx: {round(np.degrees(dx),4)} / Dy: {round(np.degrees(dy),4)}")
+                        # print("landmark estimated positions:", self.slam.get_landmark_positions())
 
-                    # self.input.addstr(15, 0, f"r-diff={measured_r-est_r}")
-                    # self.input.addstr(16, 0, f"alpha-diff={measured_alpha-est_alpha}")
-                    # self.input.addstr(17, 0, f"quark={quark}")
-
+                        # self.input.addstr(15, 0, f"r-diff={measured_r-est_r}")
+                        # self.input.addstr(16, 0, f"alpha-diff={measured_alpha-est_alpha}")
+                        # self.input.addstr(17, 0, f"quark={quark}")
+            except Exception as e:
+                print(e)
         
 
             print_robot_pos, _ = self.slam.get_robot_pose()
@@ -243,7 +254,7 @@ class Main():
             # create message
             distances.extend([disc[1] for disc in discs])
             angles.extend([disc[2] for disc in discs])
-            angles = [angle - math.pi/2 for angle in angles]
+            # angles = [angle - math.pi/2 for angle in angles]
 
             positions.extend([disc[0] for disc in discs])
             ids.extend([420+disc_id for disc_id, disc in enumerate(discs)])
@@ -264,14 +275,18 @@ class Main():
                 landmark_ids = ids,
                 landmark_rs = distances,
                 landmark_alphas = angles,
+                # landmark_positions = [[-position[1], position[0]] for position in positions],
                 landmark_positions = positions,
 
                 landmark_estimated_ids = landmark_estimated_ids,
+                # landmark_estimated_positions = [[-landmark_estimated_position[1],landmark_estimated_position[0]]  for landmark_estimated_position in landmark_estimated_positions],
                 landmark_estimated_positions = landmark_estimated_positions,
                 landmark_estimated_stdevs = landmark_estimated_stdevs,
 
-                robot_position = np.array([slam_position[1], -slam_position[0]]),
-                robot_theta = slam_position[2] + math.pi/2,
+                robot_position = np.array([slam_position[0], slam_position[1]]),
+                # robot_position = np.array([-slam_position[1], slam_position[0]]),
+                # robot_theta = np.where(slam_position[2] + np.pi/2 > np.pi, slam_position[2] + np.pi/2 - 2*np.pi, slam_position[2] + np.pi/2),
+                robot_theta = slam_position[2],
                 robot_stdev = slam_sigma.diagonal(),
             )
             self.count += 1
@@ -338,10 +353,10 @@ class Main():
                 try:
                     pool = ThreadPool(processes=2)
                     pool.apply_async(self.controlRobot(vehicle))
-                    if timepoint2 - timepoint1 >= 0.2:
+                    if timepoint2 - timepoint1 >= 0.5:
                         timepoint1 = time.time()
                         watch_results = pool.apply_async(self.checkDistance, (vehicle,))
-                        self.input.addstr(2, 0, f'distance: {watch_results.get()}')
+                        # self.input.addstr(2, 0, f'distance: {watch_results.get()}')
                     pool.close()
                     timepoint2 = time.time()
                                 
