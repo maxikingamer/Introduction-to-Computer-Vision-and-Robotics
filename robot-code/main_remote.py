@@ -8,7 +8,6 @@ from camera import Camera
 from publisher import Publisher
 from keypress_listener import KeypressListener
 import ev3_dc as ev3
-from thread_task import Periodic, Task, Repeated, STATE_STARTED, STATE_FINISHED, STATE_STOPPED, STATE_TO_STOP
 from slam import EKFSLAM
 import math
 from multiprocessing.pool import ThreadPool
@@ -24,15 +23,15 @@ class Main():
         self.keypress_listener = KeypressListener()
         self.publisher = Publisher()
         self.camera = Camera()
-        self.camera_height = 0.295
+        self.camera_height = 0.248
         self.count = 0
         self.slam = EKFSLAM(0.05,0.05,0.1,10*np.pi/180)
         self.old_pos = [0,0,0]
         self.input = stdscr
         self.speed = 0
         self.turn = 0
-        self.tread = 0.1392
-        self.radius = 0.0280 / 2
+        self.tread = 0.12832
+        self.radius = 0.02968 
         self.seen_ids = {}
         self.translation_matrix = [[ 1.00000001e+00, 6.76287665e-10], [ 1.24710522e+00, -1.32404765e-01]]
         self.markerPositions_3d = []                                                                                                                                                                                                                                                                                                                                                                                                                            
@@ -61,7 +60,7 @@ class Main():
             img = automatic_brightness_and_contrast(img)
             keypoints_red, thresh_red = detectRedCircle(img)
             keypoints_green, thresh_green = detectGreenCircle(img)
-            self.input.addstr(10, 0, f"Green: {len(keypoints_green)}")
+            self.input.addstr(12, 0, f"Green: {len(keypoints_green)}")
             self.input.addstr(11, 0, f"Red: {len(keypoints_red)}")
 
             keypoints = keypoints_green + keypoints_red
@@ -97,7 +96,10 @@ class Main():
                     pos_y = -tvec[0][0][0]
                     pos_x = np.sqrt(distance**2 - pos_y**2)
 
-     
+                    middle_point = corners[j][0][0] + (corners[j][0][2]-corners[j][0][0])/2
+                    self.markerPositions_2d.append([middle_point[0], middle_point[1]])
+                    self.markerPositions_3d.append([pos_x, pos_y, 0])
+                    self.input.addstr(10, 0, f"3d Marker Position: {self.markerPositions_3d[0][0]}, {self.markerPositions_3d[0][1]}")
 
                     angle = np.arctan2(pos_y,pos_x) % (2*np.pi)
                     angles.append(angle)
@@ -107,14 +109,11 @@ class Main():
                     pos_y = direction_global_coords[1]
 
                     positions.append([pos_x + robot_position[0], pos_y + robot_position[1]])
-                    self.input.addstr(9, 0, f"Marker Lovation: {positions}")
+                    self.input.addstr(9, 0, f"Marker Location: {positions}")
                     cv2.aruco.drawDetectedMarkers(img, corners)
                     cv2.drawFrameAxes(img, self.camera.camera_matrix, self.camera.dist_coeffs, rvec, tvec, 0.048)
 
-                    middle_point = corners[j][0][0] + (corners[j][0][2]- corners[j][0][0])/2
-                    self.markerPositions_2d.append([middle_point[0], middle_point[1]])
-                    self.markerPositions_3d.append([pos_x + robot_position[0], pos_y + robot_position[1], 0])
-                    
+
                     #img = cv2.circle(img, self.markerPositions_2d[j], 2, (0,0,0), 20)
                     
                     accepted_ids.append(ids[j])
@@ -124,41 +123,47 @@ class Main():
 
             discs = []
 
-
+            
             # if len(self.markerPositions_2d) > 0:
-            #     self.markerPositions_2d = np.array(self.markerPositions_2d)
-            #     self.markerPositions_2d = self.markerPositions_2d.reshape(self.markerPositions_2d.shape[0],2)
-            #     self.markerPositions_3d = np.array(self.markerPositions_3d)
-            #     self.markerPositions_3d = self.markerPositions_3d.reshape(self.markerPositions_3d.shape[0],3)
-            #     ret, self.rvec_sol, self.tvec_sol = cv2.solvePnP(self.markerPositions_3d, self.markerPositions_2d, self.camera.camera_matrix, self.camera.dist_coeffs)
-            #     np.savetxt("rvec_sol.csv", self.rvec_sol, delimiter=",")
-            #     np.savetxt("tvec_sol.csv", self.tvec_sol, delimiter=",")
+            #      self.markerPositions_2d = np.array(self.markerPositions_2d)
+            #      self.markerPositions_2d = self.markerPositions_2d.reshape(self.markerPositions_2d.shape[0],2)
+            #      self.markerPositions_3d = np.array(self.markerPositions_3d)
+            #      self.markerPositions_3d = self.markerPositions_3d.reshape(self.markerPositions_3d.shape[0],3)
+            #      ret, self.rvec_sol, self.tvec_sol = cv2.solvePnP(self.markerPositions_3d, self.markerPositions_2d, self.camera.camera_matrix, self.camera.dist_coeffs)
+            #      np.savetxt("rvec_sol.csv", self.rvec_sol, delimiter=",")
+            #      np.savetxt("tvec_sol.csv", self.tvec_sol, delimiter=",")
                 
-            for i, keypoint in enumerate(keypoints):
-                x = int(keypoint.pt[0])
-                y = int(keypoint.pt[1])
-                s = keypoint.size
-                r = int(math.floor(s/2))
-
-                if keypoint in keypoints_green: cv2.circle(img,(x, y), r, color=(255,255,255)) # green circle -> white
-                else: cv2.circle(img,(x, y), r, color=(0,0,0)) # red circle -> black
-
-                uvPoint = (x,y,0)
-                cameraMatrix_inv = np.linalg.inv(self.camera.camera_matrix)
-                dst, _ = cv2.Rodrigues(self.rvec_sol)
-                dst_inv = np.linalg.inv(dst)
-                leftSideMat  = dst_inv @ cameraMatrix_inv @ uvPoint
-                rightSideMat = dst_inv @ self.tvec_sol
-                s = (rightSideMat[2])/leftSideMat[2]
-
+            if len(keypoints) > 0:
+                for i, keypoint in enumerate(keypoints):
                 
-                marker_worldCoords = dst_inv @ (s * cameraMatrix_inv @ uvPoint - self.tvec_sol)
-                self.input.addstr(8, 0, f"Disc Lovation: {marker_worldCoords}")
+                    x = int(keypoint.pt[0])
+                    y = int(keypoint.pt[1])
+                    s = keypoint.size
+                    r = int(math.floor(s/2))
 
-                position = [marker_worldCoords[0], marker_worldCoords[1]]         
-                distance = 0  
-                angle = 0    
-                discs.append([position, distance, angle])
+                    if keypoint in keypoints_green: cv2.circle(img,(x, y), r, color=(255,255,255)) # green circle -> white
+                    else: cv2.circle(img,(x, y), r, color=(0,0,0)) # red circle -> black
+
+                    uvPoint = (x,y,1)
+                    cameraMatrix_inv = np.linalg.inv(self.camera.camera_matrix)
+                    dst, _ = cv2.Rodrigues(self.rvec_sol)
+                    dst_inv = np.linalg.inv(dst)
+                    leftSideMat  = dst_inv @ cameraMatrix_inv @ uvPoint
+                    rightSideMat = dst_inv @ self.tvec_sol
+                    s = (rightSideMat[2])/leftSideMat[2]
+
+
+                    marker_worldCoords = dst_inv @ (s * cameraMatrix_inv @ uvPoint - self.tvec_sol)
+
+                    marker_worldCoords = rotation_matrix @ np.array([marker_worldCoords[0],marker_worldCoords[1]])
+                    
+
+                    # position = [-marker_worldCoords[1] - robot_position[1],marker_worldCoords[0] + robot_position[0]]         
+                    position = [marker_worldCoords[0]+ robot_position[0],marker_worldCoords[1]+ robot_position[1]]         
+                    self.input.addstr(8, 0, f"Disc Location: {marker_worldCoords}")
+                    distance = 0  
+                    angle = 0    
+                    discs.append([position, distance, angle])
 
         else:
             ids = []
@@ -223,12 +228,10 @@ class Main():
                     for i, id in enumerate(ids):
                         if self.slam.id_never_seen_before(id[0]):
                             self.slam.add_landmark(id[0],positions[i],uncertainty)
-                            self.input.addstr(7, 0, f"Landmark positions: {positions[i]}")
+                            self.input.addstr(15, 0, f"Landmark positions: {positions[i]}")
                         # self.slam.correction_pro(id[0], positions[i])
                         # measured_r, measured_alpha, est_r, est_alpha = self.slam.correction(id[0],positions[i])
-                        measured_r, measured_alpha, est_r, est_alpha, dx, dy = self.slam.correction_direct(id[0],(distances[i],angles[i]))
-                        self.input.addstr(3, 0, f"Estimated Alpha: {round(np.degrees(est_alpha),4)} / Measured Alpha: {round(np.degrees(measured_alpha),4)}")
-                        self.input.addstr(4, 0, f"Dx: {round(np.degrees(dx),4)} / Dy: {round(np.degrees(dy),4)}")
+                        self.slam.correction_direct(id[0],(distances[i],angles[i]))
                         # print("landmark estimated positions:", self.slam.get_landmark_positions())
 
                         # self.input.addstr(15, 0, f"r-diff={measured_r-est_r}")
@@ -236,10 +239,11 @@ class Main():
                         # self.input.addstr(17, 0, f"quark={quark}")
             except Exception as e:
                 print(e)
+                print("HERE!")
         
 
             print_robot_pos, _ = self.slam.get_robot_pose()
-            ####################
+            ####################s
 
 
             slam_position, slam_sigma = self.slam.get_robot_pose()
@@ -353,7 +357,7 @@ class Main():
                 try:
                     pool = ThreadPool(processes=2)
                     pool.apply_async(self.controlRobot(vehicle))
-                    if timepoint2 - timepoint1 >= 0.5:
+                    if timepoint2 - timepoint1 >= 0.2:
                         timepoint1 = time.time()
                         watch_results = pool.apply_async(self.checkDistance, (vehicle,))
                         # self.input.addstr(2, 0, f'distance: {watch_results.get()}')

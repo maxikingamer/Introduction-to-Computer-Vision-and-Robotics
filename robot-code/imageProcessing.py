@@ -76,7 +76,7 @@ def detectRedCircle(img):
     params.blobColor = 0
     #Filter by Circularity
     params.filterByCircularity = True
-    params.minCircularity = 0.5
+    params.minCircularity = 0.6
     params.maxCircularity = 1
     # Filter by Convexity
     params.filterByConvexity = False
@@ -124,7 +124,7 @@ def detectGreenCircle(img):
     params.blobColor = 0
     #Filter by Circularity
     params.filterByCircularity = True
-    params.minCircularity = 0.5
+    params.minCircularity = 0.6
     params.maxCircularity = 1
     # Filter by Convexity
     params.filterByConvexity = False
@@ -146,15 +146,4 @@ def detectGreenCircle(img):
     
 
     return keypoints, thresh
-
-
-
-
-
-
-
-
-
-
-
 

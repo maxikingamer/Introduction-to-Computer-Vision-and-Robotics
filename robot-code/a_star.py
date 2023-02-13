@@ -4,21 +4,18 @@ import math
 
 
 class A_Star:
-    def __init__(self, start, goal, obst):
-        self.moves = np.array([(-1, 0), (0, 1), (1, 0), (0, -1)])
+    def __init__(self, start, goal, map):
+        self.moves = np.array([(-1, 0), (0, 1), (1, 0), (0, -1), (-1,-1), (-1,1), (1,1), (1,-1)])
         self.start = start
         self.goal = goal
-        self.world_map=np.ones((obst.shape[0]+2,obst.shape[1]+2))
-        self.world_map[1:obst.shape[0]+1,1:obst.shape[0]+1]=obst
+        self.world_map=np.ones((map.shape[0]+2,map.shape[1]+2))
+        self.world_map[1:map.shape[0]+1,1:map.shape[0]+1]=map
         self.path = []
-
         self.d=np.full((self.world_map.shape[0],self.world_map.shape[1]), np.inf)
         self.d[self.start[0]+1,self.start[1]+1]=distance.euclidean(self.start, self.goal)
+        # self.d[self.start[0]+1,self.start[1]+1]=distance.cityblock(self.start, self.goal)
         self.q=np.array([self.world_map==0]).squeeze()
         self.q[self.start[0]+1,self.start[1]+1]=True
-
-        
-
         self.cameFrom=np.zeros((2,self.world_map.shape[0], self.world_map.shape[1]),dtype='int')
 
     def find_path(self):
@@ -39,7 +36,7 @@ class A_Star:
 
     # explore neighboring nodes
     def update_nodes(self,u):
-        for i in range(4):
+        for i in range(8):
             # get a new node
             v=[u[0]+self.moves[i,0], u[1]+self.moves[i,1]]
             # if the new node is not an obstacle and it is not marked as visited
@@ -47,11 +44,13 @@ class A_Star:
                 if not self.world_map[v[0],v[1]] and self.q[v[0],v[1]]:
                     # compute distance from previuos node to the new node
                     dx=math.sqrt(pow(u[0]-v[0],2)+pow(u[1]-v[1],2))
+                    # dx = distance.cityblock(u, v)
                     # compute distance from the start node to the new node
                     g=self.d[u[0],u[1]]+dx
                     # compute distance from current node to end note by manhattan heuristic
                     # h=np.abs(v[0]-gx)+np.abs(v[1]-gy)
-                    h=distance.euclidean(u, self.goal)
+                    # h=distance.cityblock(v, self.goal)
+                    h=distance.euclidean(v, self.goal)
                     f=g+h
                     # if new distance is shorter than previous distance the update
                     if f<self.d[v[0],v[1]]:
