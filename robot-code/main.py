@@ -19,6 +19,9 @@ import matplotlib.pyplot as plt
 from matplotlib import colors
 
 class Main():
+    """
+    Contains the main robot loop
+    """
     def __init__(self, stdscr) -> None:
         sys.excepthook = self.except_hook
         self.input = stdscr
@@ -28,10 +31,10 @@ class Main():
         self.camera_height = 0.248
         self.count = 0
         self.slam = EKFSLAM(0.6,0.6,1,60*np.pi/180)
-        # self.tread = 0.12832   # radius - Floor
-        # self.radius = 0.02968  # tread - Floor 
-        self.radius = 0.0224  # radius - Carpet
-        self.tread = 0.1116   # tread - Carpet
+        self.tread = 0.13047   # tread - Floor
+        self.radius = 0.02775  # radius - Floor 
+        # self.radius = 0.0224  # radius - Carpet
+        # self.tread = 0.1116   # tread - Carpet
 
         self.seen_ids = {}
         self.markerPositions_3d = []                                                                                                                                                                                                                                                                                                                                                                                                                            
@@ -41,12 +44,24 @@ class Main():
         self.rvec_sol = np.loadtxt(r'./rvec_sol.csv',delimiter=",",dtype=float)
         self.green_positions = []
         self.red_positions = []
-
+        self.start = []
+        self.end = []
+        self.returning_point = []
+        self.middle_point = []
+        self.grid_size = 3
 
         self.run()
 
     ##### -------OUR CODE--------- ######
-    def transformImage(self, img, robot_position):
+    def transformImage(self, img, robot_position,vehicle):
+        """
+        Image processing pipeline has the following steps:
+        1. Enhance image contrast
+        2. Detect red and green discs
+        3. Detect aruco markers 
+        4. Estimate the position of the aruco markers
+        5. Estimate the position of the discs
+        """
         aruco_dict = cv2.aruco.Dictionary_get(cv2.aruco.DICT_ARUCO_ORIGINAL)        
         parameters = cv2.aruco.DetectorParameters_create()
         parameters.errorCorrectionRate = 0.001  
@@ -154,14 +169,18 @@ class Main():
                 position = [marker_worldCoords[0]+ robot_position[0],marker_worldCoords[1]+ robot_position[1]]     
 
                 if keypoint in keypoints_green:
+                    
                     cv2.circle(img,(x, y), r, color=(255,255,255)) # green circle -> white
-                    if not np.any([np.allclose(position, old_markers,atol=0.03,rtol=0) for old_markers in self.green_positions]):
+                    if not np.any([np.allclose(position, old_markers,atol=0.4,rtol=0) for old_markers in self.green_positions]):
                         self.green_positions.append(position)
 
                 else:
+                    
                     cv2.circle(img,(x, y), r, color=(0,0,0)) # red circle -> black
-                    if not np.any([np.allclose(position, old_markers,atol=0.03,rtol=0) for old_markers in self.red_positions]):
+                    if not np.any([np.allclose(position, old_markers,atol=0.4,rtol=0) for old_markers in self.red_positions]):
                         self.red_positions.append(position)
+
+                
 
                 distance = 0  
                 angle = 0    
@@ -175,6 +194,9 @@ class Main():
         return img, accepted_ids, positions, distances, angles, discs
 
     def doVisualizer(self, img, ids, positions, distances, angles, discs):
+        """
+        Create and send the message required by the visualizer.
+        """
         try:
             ####################
             # get the time
@@ -240,6 +262,9 @@ class Main():
 
 
     def doSLAM(self, vehicle):
+        """
+        Call the prediction and correction step of the SLAM object. Initilize message sending procedure.
+        """
         while True:
             try:
                 pos, sigma = self.slam.get_robot_pose()
@@ -248,7 +273,8 @@ class Main():
                 # get image from the camera
                 _, raw_img = self.camera.read()
                 # imaginary processing
-                img, ids, positions, distances, angles, discs = self.transformImage(raw_img, new_pos)
+                img, ids, positions, distances, angles, discs = self.transformImage(raw_img, new_pos,vehicle)
+                
 
                 uncertainty = [0.6,0.6]
                 self.slam.predict(vehicle, self.tread)
@@ -268,6 +294,9 @@ class Main():
                 self.input.addstr(20, 0, f'SLAM Exception: {e}\t\t\t')
 
     def saveMap(self):
+        """
+        Transform the landmark coordinates obtained via SLAM and save them as a CSV file.
+        """
         landmarks = np.array(self.slam.mu[3:]) * 100
         landmarks = landmarks.reshape(int(landmarks.shape[0]/2), 2)
         object_ids = []
@@ -282,6 +311,9 @@ class Main():
         return landmarks
 
     def filterPositions(self, marker_list):
+        """
+        Given a list of landmarks filter only relevant (in front of us) landmarks.
+        """
         x_bot, y_bot, theta_bot = self.slam.get_robot_pose()[0]
         dx = marker_list[:,1] - x_bot
         dy = marker_list[:,2] - y_bot
@@ -296,13 +328,22 @@ class Main():
         return marker_list
 
 
-    def calcAngle(self,angles):
+    def calcAngle(self,distances, angles):
+        """
+        Calculate the distance weighted sum of a provided list of distances and landmarks
+        """
+        distances = distances / np.sum(distances)
+        angles = angles * distances
         if len(angles) == 0: angle = 0
         else: angle = np.sum(angles)/2
         return angle
 
     def explore(self, vehicle):
+        """
+        Do exploration step.
+        """
         counter = 0
+        self.end = self.slam.get_robot_pose()[0][:2]
         while True:
             try:               
                 self.input.addstr(4, 0, f'Phase: Exploring')
@@ -362,7 +403,7 @@ class Main():
                     markers_infront_left = markers_infront_left[:min(len(markers_infront_right), len(markers_infront_left))]
             
                     marker_list = np.concatenate([markers_infront_right, markers_infront_left])
-                    angle = self.calcAngle(marker_list[:,4])
+                    angle = self.calcAngle(marker_list[:,3], marker_list[:,4])
                 
                 length = .15
                 speed = 10
@@ -382,9 +423,12 @@ class Main():
                     self.input.addstr(7, 0, f'Drive by {length * 100}cm.\t\t\t')
                     self.input.refresh()
                     vehicle.drive_straight(length, speed=speed).start(thread=False)
-                if counter % 10 == 0: 
+                if counter % 5 == 0: 
                     self.input.addstr(6, 0, f'Turn by 360 degrees.\t\t\t')
                     self.input.refresh()
+                    if counter == 0:
+                        vehicle.drive_straight(0.1, speed=speed).start(thread=False)
+                        self.start = self.slam.get_robot_pose()[0][:2]
                     vehicle.drive_turn(360,0.0).start(thread=False)
                 counter += 1
                     
@@ -397,112 +441,157 @@ class Main():
         
 
     def solve_task(self, vehicle):  
-        #landmarks = self.explore(vehicle)
-
+        """
+        Hub calling the exploration step and later the driving step.
+        """
+        landmarks = self.explore(vehicle)
         self.input.addstr(4, 0, f'Done with exploration phase.\t\t\t')
-        self.input.refresh()    
+        self.input.refresh()
         landmarks = np.loadtxt("landmarks.csv", delimiter=",")
         self.input.addstr(4, 0, f'Drive to new starting position.\t\t\t')
         self.input.refresh()
         self.drive_track(vehicle,landmarks)
 
     def plan_line(self, start, end):
-        distance = (np.sqrt((start[0] - end[0])**2 + (start[1]-end[1])**2)) 
-        angle = np.arctan2(end[1]-start[1], end[0]-start[0])
+        """
+        Given two points compute the angle and distance between them.
+        """
+        distance = (np.sqrt((start[0] - end[0])**2 + (start[1]-end[1])**2)) * self.grid_size/ 100
+        angle = np.arctan2(end[0]-start[0], end[1]-start[1])
         hit_obstacle = False
-        if angle == 0: angle=0.01
+        if np.degrees(angle) < 10:
+            angle = 2*np.pi - angle 
         if distance == 0: distance = 0.01
         return distance, angle, hit_obstacle
 
+    def to_map_space(self, point, numpy_array=False):
+        """
+        Transform the coordinates from the SLAM coordinate system to the map coordinate system
+        """
+        if not numpy_array:
+            point = np.array(point)
+        point = (np.array([1,1]) + (point*100 + self.middle_point) / self.grid_size).astype(int)
+        return list(point)
+
     def drive_to_start(self, vehicle):
+        """
+        Drive from the current position to a position from which to start the driving phase.
+        """
+        self.input.addstr(9, 0, f"Returning to: {self.start} \t\t\t'")
+        time.sleep(2)
         pos_x, pos_y , theta = self.slam.get_robot_pose()[0]
+        self.input.addstr(15, 0, f'current direction 1: {np.degrees(theta)}\t\t\t')
         vehicle.drive_turn(np.degrees(2*np.pi - theta), 0.0).start(thread=False)
+        time.sleep(2)
         pos_x, pos_y , theta = self.slam.get_robot_pose()[0]
-        distance, angle, hit_obstacle = self.plan_line([pos_x, pos_y], [0,0])
+        self.returning_point = self.to_map_space([pos_x, pos_y])
+        self.returning_point = [self.returning_point[1], self.returning_point[0]]
+        self.input.addstr(10, 0, f"From:  {self.returning_point} \t\t\t")
+        distance, angle, hit_obstacle = self.plan_line(self.returning_point, self.start)
+        self.input.addstr(11, 0, f"Turn: {np.degrees(angle)} / Distance: {distance} \t\t\t")
         vehicle.drive_turn(np.degrees(angle), 0.0).start(thread=False)
         vehicle.drive_straight(distance, speed=10).start(thread=False)
+        time.sleep(2)
         pos_x, pos_y , theta = self.slam.get_robot_pose()[0]
+        self.input.addstr(15, 0, f'current direction 2: {np.degrees(theta)}\t\t\t')
         vehicle.drive_turn(np.degrees(2*np.pi - theta), 0.0).start(thread=False)
+        time.sleep(2)
 
     def drive_track(self,vehicle,landmarks):
+        """
+        Plan and drive the track
+        """
+        self.red_positions = []
+        self.green_positions = []
         self.input.addstr(4, 0, f'Phase: Planning \t\t\t')
         self.input.refresh()
-        grid_size=2
+        self.grid_size=3
         size_x = int((max(np.abs(landmarks[:,0])))+10)
         size_y = int((max(np.abs(landmarks[:,1])))+10)
         world_coords=[max(size_x, size_y)*2, max(size_x, size_y)*2]
         self.input.addstr(5, 0, f'Discritize Map.\t\t\t')
         self.input.refresh()
-        discretizer = Discretizer(landmarks, grid_size=grid_size, world_coords=world_coords)
+        discretizer = Discretizer(landmarks, grid_size=self.grid_size, world_coords=world_coords)
         discretizer.createMap(surrounding=8)
 
         self.input.addstr(5, 0, f'Plan Path.\t\t\t')
-        self.input.refresh()    
+        self.input.refresh()         
+
+        self.middle_point = np.array([int(world_coords[0]/2), int(world_coords[1]/2)])
+        self.start = self.to_map_space(self.start)
+        self.start =  [self.start[1],  self.start[0]]
+        self.drive_to_start(vehicle)
         
-        #self.drive_to_start(vehicle)
+        current_pos = list(np.array([1,1]) + ((self.slam.get_robot_pose()[0][:2]*100 + self.middle_point)/self.grid_size).astype(int))
+        current_pos = [current_pos[1],current_pos[0]]
+        self.input.addstr(15, 0, f'CURRENT POSITION: { current_pos}\t\t\t')
+        #print("CURRENT POSITION: ", current_pos)
 
-        middle_point = np.array([int(world_coords[0]/2), int(world_coords[1]/2)])
-        current_pos = list(np.array([1,1]) + ((self.slam.get_robot_pose()[0][:2] + middle_point)/grid_size).astype(int))
-        end = [current_pos[0], current_pos[1]-6]
+        # self.start = list(np.array([1,1]) + ((self.start*100 + self.middle_point)/self.grid_size).astype(int))
+        self.end = list(np.array([1,1]) + ((np.array(self.end)*100 + self.middle_point)/self.grid_size).astype(int))
+        self.end = [self.end[1],self.end[0]]
+        separating_middle = [self.start[1]-3, self.start[0]]
+        separating_line = []
 
-        separating_middle = [current_pos[0]-3, current_pos[1]]
-        separaing_line = []
-
+        self.input.addstr(15, 0, f'END POSITION: {self.end}\t\t\t')
         i = 0
+        self.input.addstr(15, 0, f'Creating line_bottom\t\t\t')
+
         while True:
             new_point = [separating_middle[0], separating_middle[1]-i]
-            if discretizer.world_map[new_point[0],new_point[1]] == 5:
+            if discretizer.world_map[new_point[0],new_point[1]] > 0 and discretizer.world_map[new_point[0],new_point[1]] < 6:
                 break
 
-            separaing_line.append(new_point)
+            separating_line.append(new_point)
             discretizer.world_map[new_point[0],new_point[1]] = 4
             i +=1
-
-        i = 0
+        
+        i = 1
         while True:
+            self.input.addstr(15, 0, f'Creating line top {i}\t\t\t')
+            if separating_middle[1]+i >= discretizer.world_map.shape[1]:
+                break
             new_point = [separating_middle[0], separating_middle[1]+i]
-            if discretizer.world_map[new_point[0],new_point[1]] == 5:
+            if discretizer.world_map[new_point[0],new_point[1]] > 0 and discretizer.world_map[new_point[0],new_point[1]] < 6:
                 break
             
-            separaing_line.append(new_point)
+            separating_line.append(new_point)
             discretizer.world_map[new_point[0],new_point[1]] = 4
             i +=1
 
-
-
-        a_star = A_Star(current_pos, end, discretizer.world_map.transpose(1,0))
+        self.input.addstr(15, 0, f'Sarting Astar \t\t\t')
+        a_star = A_Star(current_pos, self.end, discretizer.world_map.transpose(1,0))
         path = a_star.find_path()
-        trajectory = a_star.plan_trajectory(5)
-
-
+        trajectory = a_star.plan_trajectory(num_ankers = 12)
+        self.input.addstr(15, 0, f'SAVING MAP!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!\t\t\t')
         cmap = colors.ListedColormap(['white', 'green', 'red', 'blue', 'black', 'orange', 'brown', 'pink'])
         plt.figure('Shortest path')
         plt.imshow(a_star.world_map + discretizer.mask.transpose(1,0), origin="lower", cmap=cmap, vmin=0, vmax=7)
         plt.plot(path[1],path[0], color="black", lw=2)
         plt.plot(a_star.start[1]+1,a_star.start[0]+1,'g.',markersize=20)
         plt.plot(a_star.goal[1]+1,a_star.goal[0]+1,'r.',markersize=20)
+        plt.plot(self.start[1]+1, self.start[0]+1, 'y.',markersize=20 )
+        plt.plot(self.returning_point[1]+1,self.returning_point[0]+1, 'r.',markersize=20,alpha=0.5 )
+        self.input.addstr(15, 0, f'SAFE MAP!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!\t\t\t')
         plt.savefig('initial_map.png')
 
         self.input.addstr(4, 0, f'Phase: Driving\t\t\t')
         self.input.refresh()
 
         speed = 10
-        trajectory = self.fix_trajectory(trajectory,grid_size)
+        trajectory = self.fix_trajectory(trajectory)
    
         
         len_red_discs = 0
         len_green_discs = 0
         while True:
-
             if len_red_discs != len(self.red_positions):
-                print(len_red_discs, len(self.red_positions))
-                print(np.array(self.red_positions[len_red_discs]))
                 discretizer.add_red_disc(np.array(self.red_positions[len_red_discs]), surrounding=8)
-                print("test")
                 len_red_discs += 1
                 plt.figure('Shortest path')
                 plt.imshow( discretizer.world_map.transpose(1,0), origin="lower", cmap=cmap, vmin=0, vmax=7)
                 plt.savefig('add_red_map.png')
+                self.input.addstr(15, 0, f'SAFE red MAP!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!\t\t\t')
                 #current_pos = list(np.array([1,1]) + ((self.slam.get_robot_pose()[0][:2] + middle_point)/grid_size).astype(int))
                 #a_star = A_Star(current_pos, end, discretizer.world_map.transpose(1,0))
                 #path = a_star.find_path()
@@ -516,21 +605,30 @@ class Main():
                 self.input.addstr(6, 0, f'Turn by {-np.degrees(move[3])} degrees.\t\t\t')
                 self.input.refresh()
                 vehicle.drive_turn(-np.degrees(move[3]), 0.0).start(thread=False)
+            time.sleep(1)
             if move[2]>0.01:
                 self.input.addstr(7, 0, f'Drive by {move[2] * 100}cm.\t\t\t')
                 self.input.refresh()
                 vehicle.drive_straight(move[2], speed=speed).start(thread=False)
 
-    def fix_trajectory(self,trajectory,grid_size):
+        self.input.addstr(15, 0, f'DONE \t\t\t')
+
+    def fix_trajectory(self,trajectory):
+        """
+        Corect the angles anf distances of the trajectory
+        """
         trajectory[0][3] = trajectory[0][3] - (np.pi/2)
         for i,move in enumerate(trajectory):
-            trajectory[i][2] *= grid_size
+            trajectory[i][2] *= self.grid_size
             if move[3] < -np.pi:
                 trajectory[i][3] += 2*np.pi
             
         return trajectory
 
     def run(self):
+        """
+        Take care of threading.
+        """
         try:
             vehicle = ev3.TwoWheelVehicle (
                 self.radius,  # radius_wheel

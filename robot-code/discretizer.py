@@ -1,6 +1,9 @@
 import numpy as np 
 # 1,2,3 = Markers / 4 = padding / 5 = border / 6 = start/finish / discs = 7 / 0 = background
 class Discretizer:
+    """
+    Class to perform discretization and map generation
+    """
     def __init__(self, landmarks, grid_size=1, world_coords=[400,500]):
         self.grid_size = grid_size
         self.world_map = np.zeros((int(world_coords[0]/grid_size),int(world_coords[1]/grid_size)))
@@ -9,6 +12,9 @@ class Discretizer:
         self.landmarks = landmarks
 
     def naive_line(self, r0, c0, r1, c1):
+        """
+        Computes the points lying on the line between two points.
+        """
         # The algorithm below works fine if c1 >= c0 and c1-c0 >= abs(r1-r0).
         # If either of these cases are violated, do some switches.
         if abs(c1-c0) < abs(r1-r0):
@@ -29,6 +35,9 @@ class Discretizer:
         return (np.concatenate((np.floor(y), np.floor(y)+1)).astype(int), np.concatenate((x,x)).astype(int))
 
     def createMap(self, surrounding):
+        """
+        Hub that calls all necessary functions to generate the map.
+        """
         surrounding = int(surrounding/self.grid_size) 
         for landmark in self.landmarks:
             landmark += self.middle_point
@@ -40,15 +49,15 @@ class Discretizer:
         obstacles = np.array(self.landmarks[self.landmarks[:,2] == 1][:,:2] / self.grid_size).astype(int)
         left_walls = np.array(self.landmarks[self.landmarks[:,2] == 2][:,:2] / self.grid_size).astype(int)
 
-        # right_walls = self.landmarks[self.landmarks[:,2] == 0]
-        # obstacles = self.landmarks[self.landmarks[:,2] == 1]
-        # left_walls =  self.landmarks[self.landmarks[:,2] == 2]
         self.drawBorders(right_walls, threshold=int(25/self.grid_size))
         self.drawBorders(obstacles, wall=False, threshold=int(25/self.grid_size))
         self.drawBorders(left_walls, threshold=int(25/self.grid_size))
         self.pad_path(surrounding=surrounding)
     
     def checkNeighbours(self, x, y, map, surrounding):
+        """
+        Creates the list of neighbours of a given point /old
+        """
         neighbours = [[x,y]]
         for i in range(1, surrounding+1):
             new_neighbours = []
@@ -67,32 +76,39 @@ class Discretizer:
         return neighbours
 
     def add_red_disc(self, pos, surrounding):
-
-        pos = ((np.array(self.middle_point[:2]) + pos) / self.grid_size).astype(int)
-        self.world_map[pos[1], pos[0]] = 7
-        x,y = pos
+        """
+        Add red discs to the map.
+        """
+        print("before: ", pos)
+        surrounding = int(surrounding/self.grid_size)
+        pos = ((pos*100 + np.array(self.middle_point[:2]))/self.grid_size).astype(int)
+        print("after: ", pos)
+        self.world_map[pos[0], pos[1]] = 7
+        y,x = pos
         overlay = self.world_map[y-surrounding:y+surrounding,x-surrounding:x+surrounding] == 0
         (self.world_map[y-surrounding:y+surrounding,x-surrounding:x+surrounding])[overlay] = 5
         
 
             
     def pad_path(self, surrounding):
+        """
+        Add padding to the map.
+        """
         for y, row in enumerate(self.world_map):
-            # y = int(y/self.grid_size)
             for x, pixel in enumerate(row):
                 if (pixel > 0) & (pixel < 5):
-                    # x = int(x/self.grid_size)
+                    if pixel == 3: surrounding += 1
+                    elif pixel == 1: surrounding -= 2
                     overlay = self.world_map[y-surrounding:y+surrounding,x-surrounding:x+surrounding] == 0
                     (self.world_map[y-surrounding:y+surrounding,x-surrounding:x+surrounding])[overlay] = 5
-                    #neighbours = self.checkNeighbours(x,y,self.world_map,surrounding)
-                    #for (x_n,y_n) in neighbours:
-                        #if self.world_map[y_n][x_n] == 0:
-                        #    self.world_map[y_n][x_n] = 3
+                    if pixel == 3: surrounding -= 1
+                    elif pixel == 1: surrounding += 2
     
 
-
     def drawBorders(self, landmarks, threshold=25, wall=True): 
-        
+        """
+        Draw the lines collecting the landmarks on the map.
+        """
         if(len(landmarks) < 2):
             return
         
@@ -122,14 +138,10 @@ class Discretizer:
                 if isinstance(neighbours[i], int): break
                 line = self.naive_line(l1[0], l1[1], neighbours[i][0] , neighbours[i][1])
                 for border_x, border_y in zip(line[0], line[1]):
-                    # border_x = int(border_x/self.grid_size)
-                    # border_y = int(border_y/self.grid_size)
                     if border_x < self.world_map.shape[0] and border_y < self.world_map.shape[1] and border_x > 0 and border_y > 0:
                         self.world_map[border_x, border_y] = 4
                     else:
-                        print("Border_x: ", border_x, "/ Border_y: ", border_y)
-                        print("[", self.world_map.shape[0], ",", self.world_map.shape[1], "]")
-                        print("World Map is too small or measurement is hella wrong")
+                        print("Measurement does not fit map criteria.")
 
                 
         

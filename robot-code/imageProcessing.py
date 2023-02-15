@@ -3,6 +3,9 @@ import numpy as np
 from scipy.ndimage.morphology import binary_closing 
 
 def automatic_brightness_and_contrast(image, clip_hist_percent=1):
+    """
+    Perform contast enhancement of the image.
+    """
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
     
     # Calculate grayscale histogram
@@ -37,25 +40,21 @@ def automatic_brightness_and_contrast(image, clip_hist_percent=1):
     auto_result = cv2.convertScaleAbs(image, alpha=alpha, beta=beta)
     return auto_result
 
-def preprocess2(img):
-    lab = cv2.cvtColor(img, cv2.COLOR_BGR2LAB)
-    l_channel, a, b = cv2.split(lab)
-    # Applying CLAHE to L-channel
-    # feel free to try different values for the limit and grid size:
-    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8))
-    cl = clahe.apply(l_channel)
-    # merge the CLAHE enhanced L-channel with the a and b channel
-    limg = cv2.merge((cl,a,b))
-    # Converting image from LAB Color model to BGR color spcae
-    enhanced_img_m2 = cv2.cvtColor(limg, cv2.COLOR_LAB2BGR)
-
-    return enhanced_img_m2
 
 def detectRedCircle(img):
+    """
+    Red circle detection pipeline:
+    - apply gaussian blur.
+    - find only red patches of the image.
+    - binarize the image
+    - apply blob detection algorithm
+    """
     blurred = cv2.GaussianBlur(img, (3,3), sigmaX=9, sigmaY=9, borderType = cv2.BORDER_DEFAULT)
     hsv = cv2.cvtColor(blurred, cv2.COLOR_BGR2HSV)
-    lower = np.array([170,40,40])
-    upper = np.array([180,255,255])
+    # lower = np.array([170,40,40])
+    lower = np.array([150, 100, 50])
+    # upper = np.array([180,255,255])
+    upper = np.array([180, 255, 255])
     mask = cv2.inRange(hsv, lower, upper)
     # mask = cv2.bitwise_and(img, img, mask=mask)
     # thresh = cv2.threshold(mask, 200, 255, cv2.THRESH_BINARY_INV)
@@ -69,14 +68,14 @@ def detectRedCircle(img):
     #params.maxThreshold = 256
     # Filter by Area.
     params.filterByArea = True
-    params.minArea = 10**2 * np.pi
-    params.maxArea = 50**2 * np.pi
+    params.minArea = 20**2 * np.pi
+    params.maxArea = 40**2 * np.pi
     # Filter by Color (black=0)
     params.filterByColor = False
     params.blobColor = 0
     #Filter by Circularity
     params.filterByCircularity = True
-    params.minCircularity = 0.6
+    params.minCircularity = 0.5
     params.maxCircularity = 1
     # Filter by Convexity
     params.filterByConvexity = False
@@ -102,6 +101,13 @@ def detectRedCircle(img):
     return keypoints, thresh
 
 def detectGreenCircle(img):
+    """
+    Red circle detection pipeline:
+    - apply gaussian blur.
+    - find only red patches of the image.
+    - binarize the image
+    - apply blob detection algorithm
+    """
     blurred = cv2.GaussianBlur(img, (3,3), sigmaX=9, sigmaY=9, borderType = cv2.BORDER_DEFAULT)
     hsv = cv2.cvtColor(blurred, cv2.COLOR_BGR2HSV)
     lower = np.array([40,40,40])
@@ -117,8 +123,8 @@ def detectGreenCircle(img):
     #params.maxThreshold = 256
     # Filter by Area.
     params.filterByArea = True
-    params.minArea = 10**2 * np.pi
-    params.maxArea = 50**2 * np.pi
+    params.minArea = 20**2 * np.pi
+    params.maxArea = 40**2 * np.pi
     # Filter by Color (black=0)
     params.filterByColor = False
     params.blobColor = 0

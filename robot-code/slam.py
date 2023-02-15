@@ -2,13 +2,11 @@ import numpy as np
 import math
 import ev3_dc as ev3
 
-def camera_detections(robot_pose):
-    # get landmarks from camera image and return a list
-    # where each item is a landmark observation:
-    # [[actual_measurement, world_coords, camera_coords, id], ...]
-    pass
     
 class EKFSLAM:
+    """
+    Class that performs slam.
+    """
     def __init__(self,stddev_l,stddev_r,erorr_r,erorr_alpha):
         self.mu = np.zeros(3)
         self.sigma = np.array([[0,0,0],[0,0,0],[0,0,0]])
@@ -21,9 +19,8 @@ class EKFSLAM:
         self.motor_r_old = 0
 
     def get_motor_movement(self, vehicle):
-        # returns the motor movement in this timestep
-        # return (l, r)
-        # x, y, angle = vehicle.position
+        """Read out the movements of the left and right wheels from the motor rotation."""
+
         motor_l_total, motor_r_total = vehicle.motor_pos
         motor_l = motor_l_total- self.motor_l_old
         motor_r = motor_r_total- self.motor_r_old
@@ -31,20 +28,6 @@ class EKFSLAM:
         self.motor_r_old = motor_r_total
         l = motor_l * np.pi * 0.056 / 360
         r = motor_r * np.pi * 0.056 / 360
-        #print(f'the current motor_l position is: {motor_l}°')    
-        #print(f'the current motor_r position is: {motor_r}°') 
-        #if movement_type == "straight":
-            #return movement_args, movement_args
-        #else:
-            #if movement_args[0] < 0:
-            #tread_r = movement_args[1] + tread/2
-            #tread_l = movement_args[1] - tread/2
-            #else:
-            #    tread_r = movement_args[1] - tread/2
-            #    tread_l = movement_args[1] + tread/2
-    
-            
-        #return movement_args[0] * tread_l, movement_args[0] * tread_r
         return l, r
 
     def predict(self, vehicle, tread):
@@ -83,15 +66,6 @@ class EKFSLAM:
 
         self.mu[0] = new_coords[0]
         self.mu[1] = new_coords[1]
-
-        
-        # angle = np.where(angle > np.pi, angle - 2*np.pi, angle) # from [0,2*pi] to [-pi,pi]
-        # if angle > np.pi:
-        #     angle = angle - 2 * np.pi
-        
-        #new coords direct
-        #self.mu[0], self.mu[1], self.mu[2] = vehicle.position
-        #self.mu[2] = np.radians(self.mu[2])
         
         #sigma update
         self.sigma[:3,:3] = (G @ sigma @ G.T) + (V @ sigma_mu @ V.T)
@@ -106,7 +80,7 @@ class EKFSLAM:
         :param coordinates: the [x,y]-coordinates of the landmark 
         :param uncertainty: the uncertainty of the measurment as an iterable with length 2
         """
-        # coordinates_fixed = [coordinates[1],coordinates[0]]
+
         # extend mu
         self.mu = np.append(self.mu, coordinates,axis=0)
         # map the landmark id to its position in the coordinates vector
@@ -119,109 +93,12 @@ class EKFSLAM:
         sigma_new[self.sigma.shape[0]+1,self.sigma.shape[1]+1] = uncertainty[1]
         self.sigma = sigma_new
 
-    def correction(self,landmark_id, landmark_coords):
-        """
-        Computes the correction step as provided in the pdf.
-        :param landmark_id: the id of the detected aruco marker
-        :param landmark_coords: the [x,y]-coordinates of the aruco marker
-        """
-        robot_positions, robot_error = self.get_robot_pose()
-
-        #measured distance and angle to landmark
-        measured_r = np.sqrt((landmark_coords[0]-robot_positions[0])**2 + (landmark_coords[1]-robot_positions[1])**2)
-        measured_alpha = np.arctan2((landmark_coords[1]-robot_positions[1]),(landmark_coords[0]-robot_positions[0])) - robot_positions[2]
-
-        landmark_id_in_mu = int(self.map[landmark_id])
-        positions, errors = self.get_landmark_x_y(landmark_id_in_mu)
-        # positions = self.mu[3+2*landmark_id_in_mu : 3+2*(landmark_id_in_mu+1)]
-        # robot_positions, robot_error = self.get_robot_pose()
-      
-        #precomputation for derrivatives  
-        x_bot, y_bot, theta_bot = robot_positions
-        x_lm, y_lm = positions
-        dx = x_lm - x_bot
-        dy = y_lm - y_bot
-
-        #estimated distance and angle to landmark
-        est_r = np.sqrt(dx**2 + dy**2)
-        est_alpha = (np.arctan2(dy,dx) - theta_bot) % (2*np.pi)
-
-        #compute matrix H
-        H = np.zeros((2,len(self.mu)))
-        H[0,0] = -dx/est_r
-        H[0,1] = -dy/est_r
-        H[0,2] = 0
-        H[1,0] = dy/(est_r**2)
-        H[1,1] = -dx/(est_r**2)
-        H[1,2] = -1
-        H[0,2*landmark_id_in_mu+1] = dx/est_r
-        H[0,2*landmark_id_in_mu+2] = dy/est_r
-        H[1,2*landmark_id_in_mu+1] = -dy/(est_r**2)
-        H[1,2*landmark_id_in_mu+2] = dx/(est_r**2)
-
-        #correction step
-        Q = np.diag([self.merror_r**2,self.merror_alpha**2])
-        K = self.sigma @ (H.T @ np.linalg.inv( (H @ self.sigma @ H.T) + Q))
-        assert -np.pi < measured_alpha - est_alpha < np.pi
-
-        # update mu
-        self.mu += (K @ (np.array([measured_r - est_r, self.difference_angle(measured_alpha,est_alpha)])))
-
-        #update sigma
-        self.sigma = (np.identity(self.sigma.shape[0]) - (K @ H) ) @ self.sigma
-        
-        return measured_r, measured_alpha, est_r, est_alpha
-
     
     def difference_angle(self, angle1, angle2):
         difference = (angle1 - angle2) % (2*np.pi) 
         difference = np.where(difference > np.pi, difference - 2*np.pi, difference)
         return difference
-
-
-    def correction_pro(self, id, landmark_position_measured) -> None:
-        # landmark_position_measured = np.array([landmark_position_measured[1], landmark_position_measured[0]])
-
-        robot_positions, robot_error = self.get_robot_pose()
-        r_meas = np.sqrt((landmark_position_measured[0]-robot_positions[0])**2 + (landmark_position_measured[1]-robot_positions[1])**2)
-        alpha_meas = np.arctan2((landmark_position_measured[1]-robot_positions[1]),(landmark_position_measured[0]-robot_positions[0])) - robot_positions[2]
-
-        N = int((len(self.mu)-3)/2)
-        # i = self.ids.index(id)
-        i = int(self.map[int(id)])-1
-
-        x_lm, y_lm = self.mu[3+2*i : 3+2*(i+1)]
-        # x_bot, y_bot, theta_bot, stdev_bot = self.get_robot_pose()
-        x_bot, y_bot, theta_bot = robot_positions
-        
-        dx = x_lm - x_bot
-        dy = y_lm - y_bot
-
-        r = np.sqrt(dx**2 + dy**2)
-        alpha = np.arctan2(dy,dx) - theta_bot
-
-        H = np.zeros((2,3+2*N))
-        H[0,:3] = np.array([-dx / r, -dy / r, 0])
-        H[1,:3] = np.array([dy / r**2, -dx / r**2, -1])
-        
-        H[0,3+2*i : 3+2*(i+1)] = np.array([dx / r, dy / r])
-        H[1,3+2*i : 3+2*(i+1)] = np.array([-dy / r**2, dx / r**2])
-
-        Q = np.diag([self.merror_r**2, self.merror_alpha**2])
-        inv = np.linalg.inv(H @ self.sigma @ H.T + Q)
-        K = self.sigma @ (H.T @ inv)
-
-        err = np.array([r_meas - r, self.difference_angle(alpha_meas, alpha)])
-        correction = K @ err
-
-        # print('[SLAM]: [d_r, d_alpha]: ', err)
-        # print('[SLAM]: id, correction', id, correction)
-        # print('[SLAM]: K: ', K)
-
-        self.mu += correction
-        self.sigma = (np.identity(3+2*N) - K @ H) @ self.sigma
-
-        return
+   
 
     def correction_direct(self,landmark_id, landmark_dist_angle):
         """
@@ -237,8 +114,6 @@ class EKFSLAM:
 
         landmark_id_in_mu = int(self.map[landmark_id])
         positions, errors = self.get_landmark_x_y(landmark_id_in_mu)
-        # positions = self.mu[3+2*landmark_id_in_mu : 3+2*(landmark_id_in_mu+1)]
-        # robot_positions, robot_error = self.get_robot_pose()
       
         #precomputation for derrivatives  
         x_bot, y_bot, theta_bot = robot_positions
@@ -277,44 +152,30 @@ class EKFSLAM:
 
 
     def get_robot_pose(self):
-        # read out the robot position and angle from mu variable
-        # read out robot error from Sigma
-        
+        """Read out the robot position and angle from mu variable"""
         return self.mu[:3], self.sigma[:3,:3]
 
 
-    # the two following functions can be merged
-    def get_landmark_positions(self):# read out the landmark positions from mu variable
-        # read out landmark error from Sigma
+    def get_landmark_positions(self):
+        """
+        Read out the landmark positions from mu variable, read out landmark error from Sigma.
+        """
         return self.mu[3:], self.sigma[3:,3:]
     
     def get_landmark_x_y(self,i):
+        """
+        Get the landmark possitions and covariances from the mu variable and Sigma.
+        """
         positions, errors = self.get_landmark_positions()
         return positions[2*i-2:2*i], errors[2*i-2:2*i,2*i-2:2*i]
         
         
     def id_never_seen_before(self, id):
+        """
+        Add landmarks that wehave not seen before to the dictionary of seen landmarks.
+        """
         return not(id in list(self.map.keys()))
 
 
 
 
-slam = EKFSLAM(0.01,0.01,0.01,0.01)
-timesteps = []
-
-for timestep in timesteps:
-    # movements is what is refered to as u = (l, r) in the document
-    movements = get_motor_movement()
-    slam.predict(movements)
-    landmark_observations = camera_detections(slam.get_robot_pose())
-    for landmark_observation in landmark_observations:
-        actual_measurement, world_coords, camera_coords, id = landmark_observation
-
-        # actual_measurement is the distance r and angle alpha of the landmark relative to the robot.
-        # world_coords are the world coordinates of the landmark.
-        # camera_coords are the camera coordinates of the landmark.
-        # id is a unique number identifying the landmark.
-        if slam.id_never_seen_before(id):
-            slam.add_landmark(world_coords)
-        slam.correction(actual_measurement, id)
-        # print("landmark estimated positions:", slam.get_landmark_positions())

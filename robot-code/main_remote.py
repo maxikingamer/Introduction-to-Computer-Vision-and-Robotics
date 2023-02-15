@@ -165,6 +165,7 @@ class Main():
                     angle = 0    
                     discs.append([position, distance, angle])
 
+
         else:
             ids = []
         self.markerPositions_2d = []

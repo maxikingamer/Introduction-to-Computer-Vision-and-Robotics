@@ -19,12 +19,18 @@ class A_Star:
         self.cameFrom=np.zeros((2,self.world_map.shape[0], self.world_map.shape[1]),dtype='int')
 
     def find_path(self):
+        """
+        Reconstructs the path given the distance matrix.
+        """
         self.search_path()
         [px,py]=self.reconstruct_path()
         self.path = [px,py]
         return self.path
 
     def find_min_node(self):
+        """
+        Find the node with minimal cost from a given node.
+        """
         tmp=np.array(self.d)
         # we only look at not visited nodes
         tmp[~self.q]=np.inf
@@ -36,6 +42,7 @@ class A_Star:
 
     # explore neighboring nodes
     def update_nodes(self,u):
+        """Explore neighbouring nodes, compute cost"""
         for i in range(8):
             # get a new node
             v=[u[0]+self.moves[i,0], u[1]+self.moves[i,1]]
@@ -61,6 +68,9 @@ class A_Star:
 
     # perform path search				
     def search_path(self):
+        """
+        Completes the cost matrix
+        """
         # get number of not visited nodes
         k=np.count_nonzero(self.q)
         # search until all nodes are visited
@@ -77,6 +87,9 @@ class A_Star:
 
     # reconstruct path from visited nodes list
     def reconstruct_path(self):
+        """
+        Construcs the path from start to finish
+        """
         T=pow(self.world_map.shape[0]-2,2)
         
         # we shift points since we have added borders
@@ -97,6 +110,9 @@ class A_Star:
         return px, py
 
     def plan_line(self, start, end):
+        """
+        Computes angle and distance given two points.
+        """
         distance = (np.sqrt((start[0] - end[0])**2 + (start[1]-end[1])**2)) / 100
         angle = np.arctan2(end[1]-start[1], end[0]-start[0])
         hit_obstacle = False
@@ -105,6 +121,9 @@ class A_Star:
         return distance, angle, hit_obstacle
 
     def plan_trajectory(self, num_ankers):
+        """
+        Plan the trajectory from start to finish based on the A-star path.
+        """
         ankers = np.linspace(0,len(self.path[0])-1, num_ankers, dtype="int64")
         trajectory = []
         last_angle = 0
