@@ -110,7 +110,7 @@ def detectGreenCircle(img):
     """
     blurred = cv2.GaussianBlur(img, (3,3), sigmaX=9, sigmaY=9, borderType = cv2.BORDER_DEFAULT)
     hsv = cv2.cvtColor(blurred, cv2.COLOR_BGR2HSV)
-    lower = np.array([40,40,40])
+    lower = np.array([26,25,25])
     upper = np.array([70,255,255])
     mask = cv2.inRange(hsv, lower, upper)
     # thresh = cv2.bitwise_and(img, img, mask=mask)

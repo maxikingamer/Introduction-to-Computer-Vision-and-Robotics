@@ -1,5 +1,5 @@
 import numpy as np 
-# 1,2,3 = Markers / 4 = padding / 5 = border / 6 = start/finish / discs = 7 / 0 = background
+# 1,2,3 = Markers / 4 = padding / 5 = border / 6 = finish / discs = 7 / 8 = start / 0 = background
 class Discretizer:
     """
     Class to perform discretization and map generation
@@ -42,16 +42,20 @@ class Discretizer:
         for landmark in self.landmarks:
             landmark += self.middle_point
             if landmark[2] > 2:
-                self.mask[int(landmark[0]/self.grid_size)-1:int(landmark[0]/self.grid_size)+4, int(landmark[1]/self.grid_size)-1:int(landmark[1]/self.grid_size)+4] = landmark[2]
+                self.world_map[int(landmark[0]/self.grid_size)-1:int(landmark[0]/self.grid_size)+1, int(landmark[1]/self.grid_size)-1:int(landmark[1]/self.grid_size)+1] = landmark[2]
+            elif landmark[2] == -1:
+                self.mask[int(landmark[0]/self.grid_size), int(landmark[1]/self.grid_size)] = 8
             else:
-                self.world_map[int(landmark[0]/self.grid_size)-2:int(landmark[0]/self.grid_size)+3, int(landmark[1]/self.grid_size)-2:int(landmark[1]/self.grid_size)+3] = landmark[2] + 1
+                self.world_map[int(landmark[0]/self.grid_size)-1:int(landmark[0]/self.grid_size)+1, int(landmark[1]/self.grid_size)-1:int(landmark[1]/self.grid_size)+1] = landmark[2] + 1
         right_walls = np.array(self.landmarks[self.landmarks[:,2] == 0][:,:2] / self.grid_size).astype(int)
         obstacles = np.array(self.landmarks[self.landmarks[:,2] == 1][:,:2] / self.grid_size).astype(int)
         left_walls = np.array(self.landmarks[self.landmarks[:,2] == 2][:,:2] / self.grid_size).astype(int)
+        starting_line = np.array(self.landmarks[self.landmarks[:,2] == 6][:,:2] / self.grid_size).astype(int)
 
         self.drawBorders(right_walls, threshold=int(25/self.grid_size))
         self.drawBorders(obstacles, wall=False, threshold=int(25/self.grid_size))
         self.drawBorders(left_walls, threshold=int(25/self.grid_size))
+        self.drawBorders(starting_line, threshold=int(25/self.grid_size))
         self.pad_path(surrounding=surrounding)
     
     def checkNeighbours(self, x, y, map, surrounding):
@@ -79,15 +83,15 @@ class Discretizer:
         """
         Add red discs to the map.
         """
-        print("before: ", pos)
         surrounding = int(surrounding/self.grid_size)
         pos = ((pos*100 + np.array(self.middle_point[:2]))/self.grid_size).astype(int)
-        print("after: ", pos)
-        self.world_map[pos[0], pos[1]] = 7
-        y,x = pos
-        overlay = self.world_map[y-surrounding:y+surrounding,x-surrounding:x+surrounding] == 0
-        (self.world_map[y-surrounding:y+surrounding,x-surrounding:x+surrounding])[overlay] = 5
-        
+        if pos[0] < self.world_map.shape[0] and pos[1] < self.world_map.shape[1]:
+            self.world_map[pos[0], pos[1]] = 7
+            y,x = pos
+            overlay = self.world_map[y-surrounding:y+surrounding,x-surrounding:x+surrounding] == 0
+            (self.world_map[y-surrounding:y+surrounding,x-surrounding:x+surrounding])[overlay] = 5
+            return True
+        return False
 
             
     def pad_path(self, surrounding):
@@ -99,10 +103,12 @@ class Discretizer:
                 if (pixel > 0) & (pixel < 5):
                     if pixel == 3: surrounding += 1
                     elif pixel == 1: surrounding -= 2
+                    elif pixel == 6: surrounding = 0
                     overlay = self.world_map[y-surrounding:y+surrounding,x-surrounding:x+surrounding] == 0
                     (self.world_map[y-surrounding:y+surrounding,x-surrounding:x+surrounding])[overlay] = 5
                     if pixel == 3: surrounding -= 1
                     elif pixel == 1: surrounding += 2
+                    elif pixel == 6: surrounding = 0
     
 
     def drawBorders(self, landmarks, threshold=25, wall=True): 
@@ -128,7 +134,12 @@ class Discretizer:
                     min_dist2 = dist
                     neighbours[1] = l2
 
-            if not wall:
+            if wall:
+                if min_dist1 > 2*threshold:
+                    continue
+                elif min_dist2 > 2*threshold:
+                    neighbours[1] = 0
+            else:
                 if min_dist1 > threshold:
                     continue
                 elif min_dist2 > threshold:

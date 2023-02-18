@@ -12,7 +12,7 @@ from slam import EKFSLAM
 import math
 from multiprocessing.pool import ThreadPool
 import curses
-from imageProcessing import automatic_brightness_and_contrast, preprocess2, detectRedCircle, detectGreenCircle
+from imageProcessing import automatic_brightness_and_contrast, detectRedCircle, detectGreenCircle
 
 
 class Main():

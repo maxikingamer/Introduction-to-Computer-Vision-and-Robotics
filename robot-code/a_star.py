@@ -6,6 +6,7 @@ import math
 class A_Star:
     def __init__(self, start, goal, map):
         self.moves = np.array([(-1, 0), (0, 1), (1, 0), (0, -1), (-1,-1), (-1,1), (1,1), (1,-1)])
+        # self.moves = np.array([(-1, 0), (0, 1), (1, 0), (0, -1)])
         self.start = start
         self.goal = goal
         self.world_map=np.ones((map.shape[0]+2,map.shape[1]+2))
@@ -14,7 +15,8 @@ class A_Star:
         self.d=np.full((self.world_map.shape[0],self.world_map.shape[1]), np.inf)
         self.d[self.start[0]+1,self.start[1]+1]=distance.euclidean(self.start, self.goal)
         # self.d[self.start[0]+1,self.start[1]+1]=distance.cityblock(self.start, self.goal)
-        self.q=np.array([self.world_map==0]).squeeze()
+        # self.q=np.array([self.world_map==0]).squeeze()
+        self.q=np.array([((self.world_map==0) | (self.world_map==5))]).squeeze()
         self.q[self.start[0]+1,self.start[1]+1]=True
         self.cameFrom=np.zeros((2,self.world_map.shape[0], self.world_map.shape[1]),dtype='int')
 
@@ -43,21 +45,22 @@ class A_Star:
     # explore neighboring nodes
     def update_nodes(self,u):
         """Explore neighbouring nodes, compute cost"""
-        for i in range(8):
+        for i in range(self.moves.shape[0]):
             # get a new node
             v=[u[0]+self.moves[i,0], u[1]+self.moves[i,1]]
             # if the new node is not an obstacle and it is not marked as visited
             if (v[0]>0) & (v[0]<self.world_map.shape[0]) & (v[1]>0) & (v[1]<self.world_map.shape[1]):
-                if not self.world_map[v[0],v[1]] and self.q[v[0],v[1]]:
+                # if not self.world_map[v[0],v[1]] and self.q[v[0],v[1]]:
+                if (self.world_map[v[0],v[1]]==0 or self.world_map[v[0],v[1]]==5) and self.q[v[0],v[1]]:
                     # compute distance from previuos node to the new node
                     dx=math.sqrt(pow(u[0]-v[0],2)+pow(u[1]-v[1],2))
-                    # dx = distance.cityblock(u, v)
                     # compute distance from the start node to the new node
                     g=self.d[u[0],u[1]]+dx
                     # compute distance from current node to end note by manhattan heuristic
                     # h=np.abs(v[0]-gx)+np.abs(v[1]-gy)
                     # h=distance.cityblock(v, self.goal)
                     h=distance.euclidean(v, self.goal)
+                    if self.world_map[v[0],v[1]]==5: h += 100
                     f=g+h
                     # if new distance is shorter than previous distance the update
                     if f<self.d[v[0],v[1]]:
@@ -120,24 +123,69 @@ class A_Star:
         if distance == 0: distance = 0.01
         return distance, angle, hit_obstacle
 
-    def plan_trajectory(self, num_ankers):
+    def plan_trajectory(self):
         """
         Plan the trajectory from start to finish based on the A-star path.
         """
-        ankers = np.linspace(0,len(self.path[0])-1, num_ankers, dtype="int64")
+        # num_ankers = int(len(self.path[0])/10)
+        # ankers = np.linspace(0,len(self.path[0])-1, num_ankers, dtype="int64")
+
+        ankers = self.smooth_path()
         trajectory = []
         last_angle = 0
+        add_angle = 0
+        add_length = 0
+        check = True
+
         for i, anker in enumerate(ankers):
             if i == len(ankers)-1:
                 break
-            start = [self.path[0][anker], self.path[1][anker]]
+            if check:
+                start = [self.path[0][anker], self.path[1][anker]]
             end = [self.path[0][ankers[i+1]], self.path[1][ankers[i+1]]]
             
-            lenght, angle, hit_obstacle = self.plan_line(start, end)
-            angle = angle - last_angle
-            last_angle += angle
-            trajectory.append([start, end, lenght, angle])
+            length, angle, hit_obstacle = self.plan_line(start, end)
+
+            min_angle = 20
+            if np.degrees(angle-last_angle) < min_angle and np.degrees(angle-last_angle) > -min_angle:
+                add_angle += angle-last_angle
+                add_length += length
+                check = False
+            else:
+                angle = angle - last_angle + add_angle
+                length += add_length
+                last_angle += angle
+                add_angle = 0
+                add_length = 0
+                trajectory.append([start, end, length, angle])
+                check = True
 
         return trajectory
 
+    def smooth_path(self):
+        """
+        returns smoothed path which is faster than usual trajectory from above
+        """
+        anker_points = [0]
+        vertical = (self.path[1][0] - self.path[1][1]) == 0
+        diagonal = (np.abs(self.path[1][0] - self.path[1][1]) + np.abs(self.path[0][0] - self.path[0][1])) == 2
+        for i, (x, y) in enumerate(zip(self.path[0], self.path[1])):
+            if i > 0:
+                last_place = [self.path[0][i-1], self.path[1][i-1]]
+                place = [x,y]
+
+                if vertical:
+                    if (last_place[1] - place[1]) == 0:
+                        continue
+                    else:
+                        anker_points.append(i)
+                        vertical = False
+                else:
+                    if (last_place[0] - place[0]) == 0:
+                        continue
+                    else:
+                        anker_points.append(i)
+                        vertical = True
+
+        return anker_points
     

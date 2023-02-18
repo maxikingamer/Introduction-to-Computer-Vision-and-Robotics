@@ -48,7 +48,7 @@ class Main():
         self.end = []
         self.returning_point = []
         self.middle_point = []
-        self.grid_size = 3
+        self.grid_size = 2
 
         self.run()
 
@@ -139,6 +139,7 @@ class Main():
             discs = []
 
 
+
             # if len(self.markerPositions_2d) > 0:
             #     self.markerPositions_2d = np.array(self.markerPositions_2d)
             #     self.markerPositions_2d = self.markerPositions_2d.reshape(self.markerPositions_2d.shape[0],2)
@@ -171,13 +172,14 @@ class Main():
                 if keypoint in keypoints_green:
                     
                     cv2.circle(img,(x, y), r, color=(255,255,255)) # green circle -> white
-                    if not np.any([np.allclose(position, old_markers,atol=0.4,rtol=0) for old_markers in self.green_positions]):
+                    if not np.any([np.allclose(position,old_markers,atol=0.4,rtol=0) for old_markers in self.green_positions]):
                         self.green_positions.append(position)
 
                 else:
                     
                     cv2.circle(img,(x, y), r, color=(0,0,0)) # red circle -> black
-                    if not np.any([np.allclose(position, old_markers,atol=0.4,rtol=0) for old_markers in self.red_positions]):
+                    if not np.any([np.allclose(position,old_markers,atol=0.4,rtol=0) for old_markers in self.red_positions]):
+                        print("Added new red disk!")
                         self.red_positions.append(position)
 
                 
@@ -190,6 +192,7 @@ class Main():
             ids = []
         self.markerPositions_2d = []
         self.markerPositions_3d = []
+
 
         return img, accepted_ids, positions, distances, angles, discs
 
@@ -289,7 +292,7 @@ class Main():
                 self.input.addstr(2, 0, f'Angle: {round(np.degrees(angle),2)}\t\t\t')
                 self.input.refresh()
                 self.doVisualizer(img, ids, positions, distances, angles, discs)
-                #self.saveMap()
+                # self.saveMap()
             except Exception as e:
                 self.input.addstr(20, 0, f'SLAM Exception: {e}\t\t\t')
 
@@ -301,12 +304,14 @@ class Main():
         landmarks = landmarks.reshape(int(landmarks.shape[0]/2), 2)
         object_ids = []
         for key in np.array(list(self.slam.map.keys())):
-            if key < 100:
+            if key > 33 and key < 99:
                 object_ids.append(6)
+            elif key <= 33:
+                object_ids.append(-1)
             else:
                 object_ids.append(int(key % 3))
         landmarks = np.append(landmarks, np.array(object_ids).reshape(int(landmarks.shape[0]),1), axis=1)
-        
+
         np.savetxt("landmarks.csv", landmarks, delimiter=",")
         return landmarks
 
@@ -333,7 +338,7 @@ class Main():
         Calculate the distance weighted sum of a provided list of distances and landmarks
         """
         distances = distances / np.sum(distances)
-        angles = angles * distances
+        angles = angles * (distances * 2)
         if len(angles) == 0: angle = 0
         else: angle = np.sum(angles)/2
         return angle
@@ -343,7 +348,7 @@ class Main():
         Do exploration step.
         """
         counter = 0
-        self.end = self.slam.get_robot_pose()[0][:2]
+        self.start = self.slam.get_robot_pose()[0][:2]
         while True:
             try:               
                 self.input.addstr(4, 0, f'Phase: Exploring')
@@ -405,7 +410,7 @@ class Main():
                     marker_list = np.concatenate([markers_infront_right, markers_infront_left])
                     angle = self.calcAngle(marker_list[:,3], marker_list[:,4])
                 
-                length = .15
+                length = .10
                 speed = 10
                 if angle == 0:
                     self.input.addstr(6, 0, f'Turn by {angle} degrees.\t\t\t')
@@ -420,6 +425,7 @@ class Main():
                     vehicle.drive_straight(length, speed=speed).start(thread=False)
                 else:
                     self.input.addstr(6, 0, f'Turn by {angle} degrees. Too small\t\t\t')
+                    # vehicle.drive_turn(angle, 0.0).start(thread=False)
                     self.input.addstr(7, 0, f'Drive by {length * 100}cm.\t\t\t')
                     self.input.refresh()
                     vehicle.drive_straight(length, speed=speed).start(thread=False)
@@ -427,8 +433,7 @@ class Main():
                     self.input.addstr(6, 0, f'Turn by 360 degrees.\t\t\t')
                     self.input.refresh()
                     if counter == 0:
-                        vehicle.drive_straight(0.1, speed=speed).start(thread=False)
-                        self.start = self.slam.get_robot_pose()[0][:2]
+                        vehicle.drive_straight(0.15, speed=speed).start(thread=False)
                     vehicle.drive_turn(360,0.0).start(thread=False)
                 counter += 1
                     
@@ -505,14 +510,14 @@ class Main():
         self.green_positions = []
         self.input.addstr(4, 0, f'Phase: Planning \t\t\t')
         self.input.refresh()
-        self.grid_size=3
+        self.grid_size=2
         size_x = int((max(np.abs(landmarks[:,0])))+10)
         size_y = int((max(np.abs(landmarks[:,1])))+10)
         world_coords=[max(size_x, size_y)*2, max(size_x, size_y)*2]
         self.input.addstr(5, 0, f'Discritize Map.\t\t\t')
         self.input.refresh()
         discretizer = Discretizer(landmarks, grid_size=self.grid_size, world_coords=world_coords)
-        discretizer.createMap(surrounding=8)
+        discretizer.createMap(surrounding=4)
 
         self.input.addstr(5, 0, f'Plan Path.\t\t\t')
         self.input.refresh()         
@@ -524,45 +529,64 @@ class Main():
         
         current_pos = list(np.array([1,1]) + ((self.slam.get_robot_pose()[0][:2]*100 + self.middle_point)/self.grid_size).astype(int))
         current_pos = [current_pos[1],current_pos[0]]
-        self.input.addstr(15, 0, f'CURRENT POSITION: { current_pos}\t\t\t')
+        self.input.addstr(15, 0, f'CURRENT POSITION: {current_pos}\t\t\t')
         #print("CURRENT POSITION: ", current_pos)
-
         # self.start = list(np.array([1,1]) + ((self.start*100 + self.middle_point)/self.grid_size).astype(int))
-        self.end = list(np.array([1,1]) + ((np.array(self.end)*100 + self.middle_point)/self.grid_size).astype(int))
-        self.end = [self.end[1],self.end[0]]
-        separating_middle = [self.start[1]-3, self.start[0]]
-        separating_line = []
+        # self.end = current_pos
+        # self.input.addstr(20, 0, f"End Point: {self.end}")
+        # self.end = list(np.array([1,1]) + ((np.array(self.end)*100 + self.middle_point)/self.grid_size).astype(int))
+        # self.end = [self.end[1],self.end[0]]
+        # separating_middle = [self.start[1]-3, self.start[0]]
+        # separating_line = []
 
-        self.input.addstr(15, 0, f'END POSITION: {self.end}\t\t\t')
-        i = 0
-        self.input.addstr(15, 0, f'Creating line_bottom\t\t\t')
+        # self.input.addstr(15, 0, f'END POSITION: {self.end}\t\t\t')
+        # i = 0
+        # self.input.addstr(15, 0, f'Creating line_bottom\t\t\t')
 
-        while True:
-            new_point = [separating_middle[0], separating_middle[1]-i]
-            if discretizer.world_map[new_point[0],new_point[1]] > 0 and discretizer.world_map[new_point[0],new_point[1]] < 6:
-                break
+        # while True:
+        #     new_point = [separating_middle[0], separating_middle[1]-i]
+        #     if discretizer.world_map[new_point[0],new_point[1]] > 0 and discretizer.world_map[new_point[0],new_point[1]] < 6:
+        #         break
 
-            separating_line.append(new_point)
-            discretizer.world_map[new_point[0],new_point[1]] = 4
-            i +=1
+        #     separating_line.append(new_point)
+        #     discretizer.world_map[new_point[0],new_point[1]] = 4
+        #     i +=1
         
-        i = 1
-        while True:
-            self.input.addstr(15, 0, f'Creating line top {i}\t\t\t')
-            if separating_middle[1]+i >= discretizer.world_map.shape[1]:
-                break
-            new_point = [separating_middle[0], separating_middle[1]+i]
-            if discretizer.world_map[new_point[0],new_point[1]] > 0 and discretizer.world_map[new_point[0],new_point[1]] < 6:
-                break
+        # i = 1
+        # while True:
+        #     self.input.addstr(15, 0, f'Creating line top {i}\t\t\t')
+        #     if separating_middle[1]+i >= discretizer.world_map.shape[1]:
+        #         break
+        #     new_point = [separating_middle[0], separating_middle[1]+i]
+        #     if discretizer.world_map[new_point[0],new_point[1]] > 0 and discretizer.world_map[new_point[0],new_point[1]] < 6:
+        #         break
             
-            separating_line.append(new_point)
-            discretizer.world_map[new_point[0],new_point[1]] = 4
-            i +=1
+        #     separating_line.append(new_point)
+        #     discretizer.world_map[new_point[0],new_point[1]] = 4
+        #     i +=1
 
-        self.input.addstr(15, 0, f'Sarting Astar \t\t\t')
-        a_star = A_Star(current_pos, self.end, discretizer.world_map.transpose(1,0))
+        # i = 0
+        # while (discretizer.world_map[self.end[0], self.end[1]] == 0):
+        #     self.input.addstr(21, 0, f"End Point: {self.end}")
+        #     self.input.addstr(22, 0, f"ID: {discretizer.world_map[self.end[0], self.end[1]]}")
+        #     self.input.refresh()
+        #     self.end = [self.end[0]-i,self.end[1]]
+        #     if discretizer.world_map[self.end[0], self.end[1]] != 0:
+        #         self.end = [self.end[0]+2, self.end[1]]
+        #         break
+        #     i+=1
+
+        # i=0
+        # while discretizer.world_map[self.end] == 5:
+        #     self.end = [self.end[0],self.end[1]-i]
+        #     i+=1   while discretizer.world_map[self.end] == 4:
+      
+
+        self.input.addstr(15, 0, f'Starting Astar \t\t\t')
+        self.returning_point = [self.returning_point[0]+1, self.returning_point[1]+1]
+        a_star = A_Star(current_pos, self.returning_point, discretizer.world_map.transpose(1,0))
         path = a_star.find_path()
-        trajectory = a_star.plan_trajectory(num_ankers = 12)
+        trajectory = a_star.plan_trajectory(num_ankers = 10)
         self.input.addstr(15, 0, f'SAVING MAP!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!\t\t\t')
         cmap = colors.ListedColormap(['white', 'green', 'red', 'blue', 'black', 'orange', 'brown', 'pink'])
         plt.figure('Shortest path')
@@ -571,7 +595,7 @@ class Main():
         plt.plot(a_star.start[1]+1,a_star.start[0]+1,'g.',markersize=20)
         plt.plot(a_star.goal[1]+1,a_star.goal[0]+1,'r.',markersize=20)
         plt.plot(self.start[1]+1, self.start[0]+1, 'y.',markersize=20 )
-        plt.plot(self.returning_point[1]+1,self.returning_point[0]+1, 'r.',markersize=20,alpha=0.5 )
+        plt.plot(self.returning_point[1],self.returning_point[0], 'r.',markersize=20,alpha=0.5 )
         self.input.addstr(15, 0, f'SAFE MAP!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!\t\t\t')
         plt.savefig('initial_map.png')
 
@@ -584,33 +608,49 @@ class Main():
         
         len_red_discs = 0
         len_green_discs = 0
+        plt.figure('Shortest path')
+        
         while True:
-            if len_red_discs != len(self.red_positions):
-                discretizer.add_red_disc(np.array(self.red_positions[len_red_discs]), surrounding=8)
-                len_red_discs += 1
-                plt.figure('Shortest path')
-                plt.imshow( discretizer.world_map.transpose(1,0), origin="lower", cmap=cmap, vmin=0, vmax=7)
-                plt.savefig('add_red_map.png')
-                self.input.addstr(15, 0, f'SAFE red MAP!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!\t\t\t')
-                #current_pos = list(np.array([1,1]) + ((self.slam.get_robot_pose()[0][:2] + middle_point)/grid_size).astype(int))
-                #a_star = A_Star(current_pos, end, discretizer.world_map.transpose(1,0))
-                #path = a_star.find_path()
-                #trajectory = a_star.plan_trajectory(5)
-                #trajectory = self.fix_trajectory(trajectory,grid_size)
+            try:
+                while len_red_discs < len(self.red_positions):
+                    print("Adding Disk ", len_red_discs)
+                    check = discretizer.add_red_disc(np.array(self.red_positions[len_red_discs]), surrounding=4)
+                    if check: 
+                        self.input.addstr(15+len_red_discs, 0, f'Added new red disc at: {self.to_map_space(self.red_positions[len_red_discs])}\t\t\t')
+                    # if len_red_discs == len(self.red_positions):
+                        # current_pos = list(np.array([1,1]) + ((self.slam.get_robot_pose()[0][:2] + middle_point)/grid_size).astype(int))
+                        # a_star = A_Star(current_pos, end, discretizer.world_map.transpose(1,0))
+                        # path = a_star.find_path()
+                        # trajectory = a_star.plan_trajectory(5)
+                        # trajectory = self.fix_trajectory(trajectory,grid_size)
+
+                    len_red_discs += 1
 
 
-            # if len_green_discs != len(self.green_positions):
-            move = trajectory.pop(0)
-            if np.degrees(move[3]) > 1 or np.degrees(move[3]) < -1 :
-                self.input.addstr(6, 0, f'Turn by {-np.degrees(move[3])} degrees.\t\t\t')
-                self.input.refresh()
-                vehicle.drive_turn(-np.degrees(move[3]), 0.0).start(thread=False)
-            time.sleep(1)
-            if move[2]>0.01:
-                self.input.addstr(7, 0, f'Drive by {move[2] * 100}cm.\t\t\t')
-                self.input.refresh()
-                vehicle.drive_straight(move[2], speed=speed).start(thread=False)
+                # if len_green_discs != len(self.green_positions):
 
+                if len(trajectory) > 0:
+                    move = trajectory.pop(0)
+                    plt.plot([move[0][1], move[1][1]], [move[0][0], move[1][0]], color="red", lw=2)
+                else: 
+                    break
+
+                if np.degrees(move[3]) > 1 or np.degrees(move[3]) < -1 :
+                    self.input.addstr(6, 0, f'Turn by {np.round(-np.degrees(move[3]),2)} degrees.\t\t\t')
+                    self.input.refresh()
+                    vehicle.drive_turn(-np.degrees(move[3]), 0.0).start(thread=False)
+                time.sleep(1)
+                if move[2]>0.01:
+                    self.input.addstr(7, 0, f'Drive by {np.round(move[2]*100,2)} cm.\t\t\t')
+                    self.input.refresh()
+                    vehicle.drive_straight(move[2], speed=speed).start(thread=False)
+            
+            except Exception as e:
+                print("move exception")
+                print(e)
+
+        plt.imshow(discretizer.world_map.transpose(1,0), origin="lower", cmap=cmap, vmin=0, vmax=7)
+        plt.savefig("add_red_map.png")
         self.input.addstr(15, 0, f'DONE \t\t\t')
 
     def fix_trajectory(self,trajectory):
