@@ -1,5 +1,5 @@
 import numpy as np 
-# 1,2,3 = Markers / 4 = padding / 5 = border / 6 = finish / discs = 7 / 8 = start / 0 = background
+# 1,2,3 = Markers / 4 = padding / 5 = border / 6 = finish / red_discs = 7 / 8 = start / green_disk = 9 / padding_red_disk = 10 / 0 = background
 class Discretizer:
     """
     Class to perform discretization and map generation
@@ -10,7 +10,7 @@ class Discretizer:
         self.mask = np.zeros((int(world_coords[0]/grid_size)+2,int(world_coords[1]/grid_size)+2))
         self.middle_point = [int(world_coords[0]/2), int(world_coords[1]/2), 0]
         self.landmarks = landmarks
-
+        
     def naive_line(self, r0, c0, r1, c1):
         """
         Computes the points lying on the line between two points.
@@ -42,11 +42,11 @@ class Discretizer:
         for landmark in self.landmarks:
             landmark += self.middle_point
             if landmark[2] > 2:
-                self.world_map[int(landmark[0]/self.grid_size)-1:int(landmark[0]/self.grid_size)+1, int(landmark[1]/self.grid_size)-1:int(landmark[1]/self.grid_size)+1] = landmark[2]
+                self.world_map[int(landmark[0]/self.grid_size), int(landmark[1]/self.grid_size)] = landmark[2]
             elif landmark[2] == -1:
                 self.mask[int(landmark[0]/self.grid_size), int(landmark[1]/self.grid_size)] = 8
             else:
-                self.world_map[int(landmark[0]/self.grid_size)-1:int(landmark[0]/self.grid_size)+1, int(landmark[1]/self.grid_size)-1:int(landmark[1]/self.grid_size)+1] = landmark[2] + 1
+                self.world_map[int(landmark[0]/self.grid_size)-2:int(landmark[0]/self.grid_size)+2, int(landmark[1]/self.grid_size)-2:int(landmark[1]/self.grid_size)+2] = landmark[2] + 1
         right_walls = np.array(self.landmarks[self.landmarks[:,2] == 0][:,:2] / self.grid_size).astype(int)
         obstacles = np.array(self.landmarks[self.landmarks[:,2] == 1][:,:2] / self.grid_size).astype(int)
         left_walls = np.array(self.landmarks[self.landmarks[:,2] == 2][:,:2] / self.grid_size).astype(int)
@@ -89,7 +89,7 @@ class Discretizer:
             self.world_map[pos[0], pos[1]] = 7
             y,x = pos
             overlay = self.world_map[y-surrounding:y+surrounding,x-surrounding:x+surrounding] == 0
-            (self.world_map[y-surrounding:y+surrounding,x-surrounding:x+surrounding])[overlay] = 5
+            (self.world_map[y-surrounding:y+surrounding,x-surrounding:x+surrounding])[overlay] = 10
             return True
         return False
 
@@ -101,13 +101,13 @@ class Discretizer:
         for y, row in enumerate(self.world_map):
             for x, pixel in enumerate(row):
                 if (pixel > 0) & (pixel < 5):
-                    if pixel == 3: surrounding += 1
-                    elif pixel == 1: surrounding -= 2
+                    if ((pixel == 3) | (pixel == 2)): surrounding += 1
+                    elif pixel == 1: surrounding -= 3
                     elif pixel == 6: surrounding = 0
                     overlay = self.world_map[y-surrounding:y+surrounding,x-surrounding:x+surrounding] == 0
                     (self.world_map[y-surrounding:y+surrounding,x-surrounding:x+surrounding])[overlay] = 5
-                    if pixel == 3: surrounding -= 1
-                    elif pixel == 1: surrounding += 2
+                    if ((pixel == 3) | (pixel == 2)): surrounding -= 1
+                    elif pixel == 1: surrounding += 3
                     elif pixel == 6: surrounding = 0
     
 

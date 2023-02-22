@@ -4,7 +4,7 @@ import math
 
 
 class A_Star:
-    def __init__(self, start, goal, map):
+    def __init__(self, start, goal, origin, map):
         self.moves = np.array([(-1, 0), (0, 1), (1, 0), (0, -1), (-1,-1), (-1,1), (1,1), (1,-1)])
         # self.moves = np.array([(-1, 0), (0, 1), (1, 0), (0, -1)])
         self.start = start
@@ -16,9 +16,10 @@ class A_Star:
         self.d[self.start[0]+1,self.start[1]+1]=distance.euclidean(self.start, self.goal)
         # self.d[self.start[0]+1,self.start[1]+1]=distance.cityblock(self.start, self.goal)
         # self.q=np.array([self.world_map==0]).squeeze()
-        self.q=np.array([((self.world_map==0) | (self.world_map==5))]).squeeze()
+        self.q=np.array([((self.world_map==0) | (self.world_map==5)| (self.world_map==10))]).squeeze()
         self.q[self.start[0]+1,self.start[1]+1]=True
         self.cameFrom=np.zeros((2,self.world_map.shape[0], self.world_map.shape[1]),dtype='int')
+        self.origin = origin
 
     def find_path(self):
         """
@@ -51,7 +52,7 @@ class A_Star:
             # if the new node is not an obstacle and it is not marked as visited
             if (v[0]>0) & (v[0]<self.world_map.shape[0]) & (v[1]>0) & (v[1]<self.world_map.shape[1]):
                 # if not self.world_map[v[0],v[1]] and self.q[v[0],v[1]]:
-                if (self.world_map[v[0],v[1]]==0 or self.world_map[v[0],v[1]]==5) and self.q[v[0],v[1]]:
+                if (self.world_map[v[0],v[1]]==0 or self.world_map[v[0],v[1]]==5 or self.world_map[v[0],v[1]]==10) and self.q[v[0],v[1]]:
                     # compute distance from previuos node to the new node
                     dx=math.sqrt(pow(u[0]-v[0],2)+pow(u[1]-v[1],2))
                     # compute distance from the start node to the new node
@@ -60,7 +61,8 @@ class A_Star:
                     # h=np.abs(v[0]-gx)+np.abs(v[1]-gy)
                     # h=distance.cityblock(v, self.goal)
                     h=distance.euclidean(v, self.goal)
-                    if self.world_map[v[0],v[1]]==5: h += 100
+                    if self.world_map[v[0],v[1]]==5: h += 999999999
+                    if self.world_map[v[0],v[1]]==10: h += 500
                     f=g+h
                     # if new distance is shorter than previous distance the update
                     if f<self.d[v[0],v[1]]:
@@ -121,7 +123,8 @@ class A_Star:
         hit_obstacle = False
         if angle == 0: angle=0.01
         if distance == 0: distance = 0.01
-        return distance, angle, hit_obstacle
+        return distance, np.degrees(angle), hit_obstacle
+
 
     def plan_trajectory(self):
         """
@@ -135,29 +138,33 @@ class A_Star:
         last_angle = 0
         add_angle = 0
         add_length = 0
+        passed_points = 1
         check = True
 
         for i, anker in enumerate(ankers):
+            # if i == len(ankers)-1:
+            #     end = [self.path[0][ankers[i]], self.path[1][ankers[i]]]
+            #     trajectory.append([start, end, length, angle])
+            #     break
             if i == len(ankers)-1:
-                break
+                end = [self.origin[0], self.origin[1]]
+            else:
+                end = [self.path[0][ankers[i+1]], self.path[1][ankers[i+1]]]
             if check:
                 start = [self.path[0][anker], self.path[1][anker]]
-            end = [self.path[0][ankers[i+1]], self.path[1][ankers[i+1]]]
+            
             
             length, angle, hit_obstacle = self.plan_line(start, end)
+            turning_angle = angle - last_angle
 
-            min_angle = 20
-            if np.degrees(angle-last_angle) < min_angle and np.degrees(angle-last_angle) > -min_angle:
-                add_angle += angle-last_angle
-                add_length += length
+            if (length < 0.05):
                 check = False
             else:
-                angle = angle - last_angle + add_angle
-                length += add_length
+                angle = turning_angle 
                 last_angle += angle
-                add_angle = 0
-                add_length = 0
-                trajectory.append([start, end, length, angle])
+                if angle > 180: angle = angle - 360
+                elif angle < -180: angle = angle + 360
+                trajectory.append([start, end, length, angle, last_angle])
                 check = True
 
         return trajectory
@@ -178,14 +185,19 @@ class A_Star:
                     if (last_place[1] - place[1]) == 0:
                         continue
                     else:
-                        anker_points.append(i)
+                        anker_points.append(i-1)
                         vertical = False
                 else:
                     if (last_place[0] - place[0]) == 0:
                         continue
                     else:
-                        anker_points.append(i)
+                        anker_points.append(i-1)
                         vertical = True
+
+        if i-1 not in anker_points:
+            anker_points.append(i-1)
+        if i not in anker_points:
+            anker_points.append(i)
 
         return anker_points
     
